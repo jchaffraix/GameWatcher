@@ -130,7 +130,7 @@ func fetchGame(gameName string) (*game, error) {
 
 func main() {
   if len(os.Args) != 2 {
-    fmt.Printf("Usage: %s file.txt\n\n\nFile contains one game name per line", os.Args[0])
+    fmt.Printf("Usage: %s file.txt\n\n\nFile contains one game name per line\n", os.Args[0])
     return
   }
 

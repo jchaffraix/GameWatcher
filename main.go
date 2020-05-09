@@ -56,7 +56,7 @@ func parseSearchResults(reader io.Reader) (*game, error) {
           // We drop the first letter as it is the price.
           game.name = string(tokenizer.Text())
 
-          isParsingPrice = false
+          isParsingName = false
         }
       case html.StartTagToken:
         tn, _ := tokenizer.TagName()
@@ -106,8 +106,8 @@ func parseSearchResults(reader io.Reader) (*game, error) {
         if tagName == "a" {
           // We only care about the first result.
 
-          if game.id == 0 || game.price == 0 {
-            return nil, errors.New("Game couldn't be parsed!")
+          if game.id == 0 || game.price == 0 || game.name == "" {
+            return nil, errors.New("Game is missing some information(name = " + game.name + ", id = " + string(game.id) + ")")
           }
           return &game, nil
         }

@@ -1,6 +1,7 @@
 package main
 
 import (
+  "bufio"
   "errors"
   "fmt"
   "io"
@@ -115,11 +116,11 @@ func parseSearchResults(reader io.Reader) (*game, error) {
   }
 }
 
-func fetchGame(keywords []string) (*game, error) {
-  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(keywords, "+"))
+func fetchGame(gameName string) (*game, error) {
+  // Steam uses '+' as delimiters for word in their calls.
+  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(gameName, " "), "+"))
   resp, err := http.Get(searchURL)
   if err != nil {
-    fmt.Printf("Error fetching keywords \"%s\" (err = %+v)\n", strings.Join(keywords, " "), err)
     return nil, err
   }
 
@@ -128,16 +129,30 @@ func fetchGame(keywords []string) (*game, error) {
 }
 
 func main() {
-  if len(os.Args) == 1 {
+  if len(os.Args) != 2 {
     fmt.Printf("Usage: %s file.txt\n\n\nFile contains one game name per line", os.Args[0])
     return
   }
 
-  keywords := os.Args[1:]
-  game, err := fetchGame(keywords)
+  file, err := os.Open(os.Args[1])
   if err != nil {
-    fmt.Printf("Error fetching keywords \"%s\" (err = %+v)\n", strings.Join(keywords, " "), err)
+    fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", os.Args[1], err)
+    return
   }
 
-  fmt.Printf("Game = %+v\n", game)
+  defer file.Close()
+  scanner := bufio.NewScanner(file)
+  for scanner.Scan() {
+      gameName := scanner.Text()
+      game, err := fetchGame(gameName)
+      if err != nil {
+        fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
+      }
+
+      fmt.Printf("Game = %+v\n", game)
+  }
+
+  if err := scanner.Err(); err != nil {
+    fmt.Fprintf(os.Stderr, "Error reading file = %s", os.Args[1])
+  }
 }

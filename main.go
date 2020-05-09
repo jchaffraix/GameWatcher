@@ -24,6 +24,10 @@ type game struct {
   price float32
 }
 
+func steamAppURL(id int) string {
+  return fmt.Sprintf("https://store.steampowered.com/app/%d", id)
+}
+
 func parseSearchResults(reader io.Reader) (*game, error) {
   // Steam results are formatted as follows:
   // * Each result (game) is an anchor
@@ -128,6 +132,23 @@ func fetchGame(gameName string) (*game, error) {
   return parseSearchResults(resp.Body)
 }
 
+func splitGamesOnCriteria(games []*game) ([]*game, []*game) {
+  // Simple price point right now.
+  var matchingGames []*game
+  var otherGames []*game
+
+  for _, game := range games {
+    if game.price < 5 {
+      matchingGames = append(matchingGames, game)
+      continue
+    }
+
+    otherGames = append(otherGames, game)
+  }
+
+  return matchingGames, otherGames
+}
+
 func main() {
   if len(os.Args) != 2 {
     fmt.Printf("Usage: %s file.txt\n\n\nFile contains one game name per line\n", os.Args[0])
@@ -142,6 +163,7 @@ func main() {
 
   defer file.Close()
   scanner := bufio.NewScanner(file)
+  var games []*game
   for scanner.Scan() {
       gameName := scanner.Text()
       game, err := fetchGame(gameName)
@@ -149,10 +171,24 @@ func main() {
         fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
       }
 
-      fmt.Printf("Game = %+v\n", game)
+      games = append(games, game)
   }
 
   if err := scanner.Err(); err != nil {
     fmt.Fprintf(os.Stderr, "Error reading file = %s", os.Args[1])
   }
+
+  matchingGames, otherGames := splitGamesOnCriteria(games)
+  fmt.Fprintf(os.Stdout, "==================================================\n")
+  fmt.Fprintf(os.Stdout, "============ Matching games ======================\n")
+  fmt.Fprintf(os.Stdout, "==================================================\n")
+  for _, game := range matchingGames {
+    fmt.Fprintf(os.Stdout, "%s: %.2f - %s\n", game.name, game.price, steamAppURL(game.id))
+  }
+  fmt.Fprintf(os.Stdout, "\n\n==================================================\n")
+
+  for _, game := range otherGames {
+    fmt.Fprintf(os.Stdout, "%s: %.2f - %s\n", game.name, game.price, steamAppURL(game.id))
+  }
+  fmt.Fprintf(os.Stdout, "==================================================\n")
 }

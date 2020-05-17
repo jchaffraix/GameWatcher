@@ -28,7 +28,7 @@ func steamAppURL(id int) string {
   return fmt.Sprintf("https://store.steampowered.com/app/%d", id)
 }
 
-func parseSearchResults(reader io.Reader) (*game, error) {
+func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
   // Steam results are formatted as follows:
   // * Each result (game) is an anchor
   // * Under each anchor, there is an image and the price.
@@ -110,10 +110,14 @@ func parseSearchResults(reader io.Reader) (*game, error) {
         tagName := string(tn)
         if tagName == "a" {
           // We only care about the first result.
-
-          if game.id == 0 || game.price == 0 || game.name == "" {
-            return nil, errors.New("Game is missing some information(name = " + game.name + ", id = " + string(game.id) + ")")
+          if game.id == 0 || game.name == "" {
+            panic("Couldn't parse " + gameName)
           }
+
+          if game.price == 0 {
+            return nil, errors.New("Game is missing price (is it out yet?)")
+          }
+
           return &game, nil
         }
     }
@@ -129,7 +133,7 @@ func fetchGame(gameName string) (*game, error) {
   }
 
   defer resp.Body.Close()
-  return parseSearchResults(resp.Body)
+  return parseSearchResults(gameName, resp.Body)
 }
 
 func splitGamesOnCriteria(games []*game) ([]*game, []*game) {
@@ -138,7 +142,7 @@ func splitGamesOnCriteria(games []*game) ([]*game, []*game) {
   var otherGames []*game
 
   for _, game := range games {
-    if game.price < 5 {
+    if game.price < 7 {
       matchingGames = append(matchingGames, game)
       continue
     }
@@ -169,6 +173,7 @@ func main() {
       game, err := fetchGame(gameName)
       if err != nil {
         fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
+        continue
       }
 
       games = append(games, game)

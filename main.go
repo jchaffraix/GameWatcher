@@ -4,11 +4,13 @@ import (
   "bufio"
   "errors"
   "fmt"
+  "flag"
   "io"
   "net/http"
   "os"
   "strconv"
   "strings"
+  "sync"
 
   "golang.org/x/net/html"
 )
@@ -124,24 +126,34 @@ func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
   }
 }
 
-func fetchGame(gameName string) (*game, error) {
+func fetchGame(gameName string, c chan *game, wg *sync.WaitGroup) {
+  defer wg.Done()
   // Steam uses '+' as delimiters for word in their calls.
   searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(gameName, " "), "+"))
   resp, err := http.Get(searchURL)
   if err != nil {
-    return nil, err
+    fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
+    return
   }
 
   defer resp.Body.Close()
-  return parseSearchResults(gameName, resp.Body)
+  game, err := parseSearchResults(gameName, resp.Body)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
+    return
+  }
+  c <- game
+  if debug {
+    fmt.Println("Done for", gameName)
+  }
 }
 
-func splitGamesOnCriteria(games []*game) ([]*game, []*game) {
+func splitGamesOnCriteria(c chan *game) ([]*game, []*game) {
   // Simple price point right now.
   var matchingGames []*game
   var otherGames []*game
 
-  for _, game := range games {
+  for game := range c {
     if game.price < 7 {
       matchingGames = append(matchingGames, game)
       continue
@@ -153,37 +165,54 @@ func splitGamesOnCriteria(games []*game) ([]*game, []*game) {
   return matchingGames, otherGames
 }
 
+var debug bool
+
 func main() {
-  if len(os.Args) != 2 {
-    fmt.Printf("Usage: %s file.txt\n\n\nFile contains one game name per line\n", os.Args[0])
+  flag.BoolVar(&debug, "debug", false, "Enable debug statements")
+  flag.Parse()
+
+  args := flag.Args()
+  if len(args) != 1 {
+    fmt.Printf("Usage: main file.txt\n\n\nFile contains one game name per line\n")
     return
   }
 
-  file, err := os.Open(os.Args[1])
+  file, err := os.Open(args[0])
   if err != nil {
-    fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", os.Args[1], err)
+    fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", args[0], err)
     return
   }
-
   defer file.Close()
-  scanner := bufio.NewScanner(file)
-  var games []*game
-  for scanner.Scan() {
-      gameName := scanner.Text()
-      game, err := fetchGame(gameName)
-      if err != nil {
-        fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
-        continue
-      }
 
-      games = append(games, game)
+  scanner := bufio.NewScanner(file)
+  gameNames := make([]string, 10)
+  for scanner.Scan() {
+    gameNames = append(gameNames, scanner.Text())
   }
 
   if err := scanner.Err(); err != nil {
-    fmt.Fprintf(os.Stderr, "Error reading file = %s", os.Args[1])
+    fmt.Fprintf(os.Stderr, "Error reading file = %s", args[0])
+    return
   }
 
-  matchingGames, otherGames := splitGamesOnCriteria(games)
+  var wg sync.WaitGroup
+  wg.Add(len(gameNames))
+  c := make(chan *game, len(gameNames))
+  for _, gameName := range gameNames {
+    if debug {
+      fmt.Println("Fetching", gameName)
+    }
+    go fetchGame(gameName, c, &wg)
+  }
+
+  wg.Wait()
+  close(c)
+  if debug {
+    fmt.Println("Done fetching!")
+  }
+
+  matchingGames, otherGames := splitGamesOnCriteria(c)
+
   fmt.Fprintf(os.Stdout, "==================================================\n")
   fmt.Fprintf(os.Stdout, "============ Matching games ======================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")

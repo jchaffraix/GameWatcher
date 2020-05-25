@@ -126,46 +126,85 @@ func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
   }
 }
 
-func fetchGame(gameName string, c chan *game, wg *sync.WaitGroup) {
-  defer wg.Done()
+func fetchGame(gameName string) (*game, error) {
+  if debug {
+    fmt.Println("Fetching", gameName)
+  }
+
   // Steam uses '+' as delimiters for word in their calls.
   searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(gameName, " "), "+"))
   resp, err := http.Get(searchURL)
   if err != nil {
-    fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
-    return
+    return nil, err
   }
-
   defer resp.Body.Close()
   game, err := parseSearchResults(gameName, resp.Body)
   if err != nil {
-    fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
-    return
+    return nil, err
   }
-  c <- game
+
   if debug {
-    fmt.Println("Done for", gameName)
+    fmt.Println("Fetched", gameName)
   }
+  return game, nil
 }
 
-func splitGamesOnCriteria(c chan *game) ([]*game, []*game) {
-  // Simple price point right now.
-  var matchingGames []*game
-  var otherGames []*game
-
-  for game := range c {
-    if game.price < 7 {
-      matchingGames = append(matchingGames, game)
+func gameWorker(c chan string, output *Output) {
+  defer output.wg.Done()
+  for gameName := range(c) {
+    game, err := fetchGame(gameName)
+    if err != nil {
+      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
       continue
     }
 
-    otherGames = append(otherGames, game)
+    splitGameOnCriteria(game, output)
+
+    if debug {
+      fmt.Println("Done for", gameName)
+    }
+  }
+}
+
+func splitGameOnCriteria(game * game, output *Output) {
+  output.m.Lock()
+  defer output.m.Unlock()
+  // Simple price point right now.
+  if game.price < 7 {
+    output.matchingGames = append(output.matchingGames, game)
+    return
   }
 
-  return matchingGames, otherGames
+  output.otherGames = append(output.otherGames, game)
 }
 
 var debug bool
+var parallelism int = 10
+
+type Output struct {
+  // Channels don't work here as we read from
+  // one of the channels at a time, leading to
+  // deadlocks (main thread is waiting on new input
+  // on one channel when all the worker threads are
+  // waiting for their write to be acknoweldged
+  // on the other channels). We *could* create
+  // some buffer channels but that would be pretty
+  // equivalent to this as they would have to be
+  // sized after the total number of games to fetch.
+  //
+  // TODO: Think about this more. Maybe we can
+  // figure out how to use a single output channel
+  // (maybe by annotating the game struct?).
+  matchingGames []*game
+  otherGames []*game
+  m sync.Mutex
+
+  wg sync.WaitGroup
+}
+
+func newOutput() Output {
+  return Output{[]*game{}, []*game{}, sync.Mutex{}, sync.WaitGroup{}}
+}
 
 func main() {
   flag.BoolVar(&debug, "debug", false, "Enable debug statements")
@@ -184,44 +223,39 @@ func main() {
   }
   defer file.Close()
 
-  scanner := bufio.NewScanner(file)
-  gameNames := make([]string, 10)
-  for scanner.Scan() {
-    gameNames = append(gameNames, scanner.Text())
+  c := make(chan string, parallelism)
+  output := newOutput()
+  output.wg.Add(parallelism)
+
+  // Start the workers.
+  for i := 0; i < parallelism; i++ {
+      go gameWorker(c, &output)
   }
 
-  if err := scanner.Err(); err != nil {
-    fmt.Fprintf(os.Stderr, "Error reading file = %s", args[0])
-    return
-  }
-
-  var wg sync.WaitGroup
-  wg.Add(len(gameNames))
-  c := make(chan *game, len(gameNames))
-  for _, gameName := range gameNames {
-    if debug {
-      fmt.Println("Fetching", gameName)
+  // Feed the games as they are read.
+  go func() {
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+      c <- scanner.Text()
     }
-    go fetchGame(gameName, c, &wg)
-  }
+    close(c)
 
-  wg.Wait()
-  close(c)
-  if debug {
-    fmt.Println("Done fetching!")
-  }
+    if err := scanner.Err(); err != nil {
+      fmt.Fprintf(os.Stderr, "Error reading file = %s", args[0])
+    }
+  }()
 
-  matchingGames, otherGames := splitGamesOnCriteria(c)
+  output.wg.Wait()
 
   fmt.Fprintf(os.Stdout, "==================================================\n")
   fmt.Fprintf(os.Stdout, "============ Matching games ======================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")
-  for _, game := range matchingGames {
+  for _, game := range output.matchingGames {
     fmt.Fprintf(os.Stdout, "%s: %.2f - %s\n", game.name, game.price, steamAppURL(game.id))
   }
   fmt.Fprintf(os.Stdout, "\n\n==================================================\n")
 
-  for _, game := range otherGames {
+  for _, game := range output.otherGames {
     fmt.Fprintf(os.Stdout, "%s: %.2f - %s\n", game.name, game.price, steamAppURL(game.id))
   }
   fmt.Fprintf(os.Stdout, "==================================================\n")

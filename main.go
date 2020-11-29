@@ -28,10 +28,6 @@ type game struct {
   id int
   name string
   price float32
-}
-
-type gameData struct {
-  name string
   targetPrice float32
 }
 
@@ -39,30 +35,31 @@ func steamAppURL(id int) string {
   return fmt.Sprintf("https://store.steampowered.com/app/%d", id)
 }
 
-func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
+func parseSearchResultsAndFillGame(game *game, reader io.Reader) error {
   // Steam results are formatted as follows:
   // * Each result (game) is an anchor
   // * Under each anchor, there is an image and the price.
 
   // We don't use html.Parse as it just generates the extra
   // tags mandated by the HTML5 page (<body>, ...).
-  var game game
 
+  // TODO: Switch to a real state machine.
   isParsingPrice := false
   isParsingName := false
+  hasParsedName := false
   tokenizer := html.NewTokenizer(reader)
   for {
     tt := tokenizer.Next()
     switch tt {
       case html.ErrorToken:
-        return nil, tokenizer.Err()
+        return tokenizer.Err()
       case html.TextToken:
         if isParsingPrice {
           // We drop the first letter as it is the price.
           priceStr := string(tokenizer.Text())[1:]
           price, err := strconv.ParseFloat(priceStr, /*bitSize=*/32)
           if err != nil {
-            return nil, errors.New("Couldn't convert text to price (" + priceStr + ")")
+            return errors.New("Couldn't convert text to price (" + priceStr + ")")
           }
           game.price = float32(price)
 
@@ -70,9 +67,17 @@ func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
         }
         if isParsingName {
           // We drop the first letter as it is the price.
-          game.name = string(tokenizer.Text())
+
+          // We override the name so that we present an accurate summary
+          // at the end.
+          //
+          // Ideally we would validate that the names are related but it
+          // is hard as Steam does some smart matching.
+          // TODO: Add this validation.
+          game.name =string(tokenizer.Text())
 
           isParsingName = false
+          hasParsedName = true
         }
       case html.StartTagToken:
         tn, _ := tokenizer.TagName()
@@ -87,7 +92,7 @@ func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
                 var err error
                 game.id, err = strconv.Atoi(string(attrValue))
                 if err != nil {
-                  return nil, errors.New("Couldn't convert attribute to id (" + string(attrValue) + ")")
+                  return errors.New("Couldn't convert attribute to id (" + string(attrValue) + ")")
                 }
                 break
               }
@@ -121,65 +126,66 @@ func parseSearchResults(gameName string, reader io.Reader) (*game, error) {
         tagName := string(tn)
         if tagName == "a" {
           // We only care about the first result.
-          if game.id == 0 || game.name == "" {
-            panic("Couldn't parse " + gameName)
+          if game.id == 0 || !hasParsedName {
+            panic("Couldn't parse " + game.name)
           }
 
           if game.price == 0 {
-            return nil, errors.New("Game is missing price (is it out yet?)")
+            return errors.New("Game is missing price (is it out yet?)")
           }
 
-          return &game, nil
+          return nil
         }
     }
   }
 }
 
-func fetchGame(gameName string) (*game, error) {
+func fetchAndFillGame(game *game) error {
   if debug {
-    fmt.Println("Fetching", gameName)
+    fmt.Println("Fetching", game.name)
   }
 
   // Steam uses '+' as delimiters for word in their calls.
-  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(gameName, " "), "+"))
+  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(game.name, " "), "+"))
   resp, err := http.Get(searchURL)
   if err != nil {
-    return nil, err
+    return err
   }
   defer resp.Body.Close()
-  game, err := parseSearchResults(gameName, resp.Body)
+
+  err = parseSearchResultsAndFillGame(game, resp.Body)
   if err != nil {
-    return nil, err
+    return err
   }
 
   if debug {
-    fmt.Println("Fetched", gameName)
+    fmt.Println("Fetched", game.name)
   }
-  return game, nil
+  return nil
 }
 
-func gameWorker(c chan gameData, output *Output) {
+func gameWorker(c chan game, output *Output) {
   defer output.wg.Done()
-  for gameData := range(c) {
-    game, err := fetchGame(gameData.name)
+  for game := range(c) {
+    err := fetchAndFillGame(&game)
     if err != nil {
-      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameData.name, err)
+      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", game.name, err)
       continue
     }
 
-    splitGameOnCriteria(game, gameData.targetPrice, output)
+    splitGameOnCriteria(game, output)
 
     if debug {
-      fmt.Println("Done for", gameData.name)
+      fmt.Println("Done for", game.name)
     }
   }
 }
 
-func splitGameOnCriteria(game * game, targetPrice float32, output *Output) {
+func splitGameOnCriteria(game game, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
   // Simple price point right now.
-  if game.price < targetPrice {
+  if game.price < game.targetPrice {
     output.matchingGames = append(output.matchingGames, game)
     return
   }
@@ -204,15 +210,15 @@ type Output struct {
   // TODO: Think about this more. Maybe we can
   // figure out how to use a single output channel
   // (maybe by annotating the game struct?).
-  matchingGames []*game
-  otherGames []*game
+  matchingGames []game
+  otherGames []game
   m sync.Mutex
 
   wg sync.WaitGroup
 }
 
 func newOutput() Output {
-  return Output{[]*game{}, []*game{}, sync.Mutex{}, sync.WaitGroup{}}
+  return Output{[]game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
 
 func main() {
@@ -232,7 +238,7 @@ func main() {
   }
   defer file.Close()
 
-  c := make(chan gameData, parallelism)
+  c := make(chan game, parallelism)
   output := newOutput()
   output.wg.Add(parallelism)
 
@@ -267,14 +273,14 @@ func main() {
       // Start with our default and override it if specified.
       targetPrice := cDefaultTargetPrice
       if len(records) == 2 {
-        tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), 32)
+        tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), /*bitSize=*/32)
         if err != nil {
           fmt.Fprintf(os.Stderr, "Error reading file = %s, invalid price (err=%+v)\n", args[0], err)
           return
         }
         targetPrice = float32(tmp)
       }
-      c <- gameData{gameName, targetPrice}
+      c <- game{/*id=*/0, gameName, /*price=*/0, targetPrice}
     }
   }()
 
@@ -284,12 +290,12 @@ func main() {
   fmt.Fprintf(os.Stdout, "============ Matching games ======================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")
   for _, game := range output.matchingGames {
-    fmt.Fprintf(os.Stdout, "%s: %.2f - %s\n", game.name, game.price, steamAppURL(game.id))
+    fmt.Fprintf(os.Stdout, "%s: $%.2f (target price = $%.2f) - %s \n", game.name, game.price, game.targetPrice, steamAppURL(game.id))
   }
   fmt.Fprintf(os.Stdout, "\n\n==================================================\n")
 
   for _, game := range output.otherGames {
-    fmt.Fprintf(os.Stdout, "%s: %.2f - %s\n", game.name, game.price, steamAppURL(game.id))
+    fmt.Fprintf(os.Stdout, "%s: $%.2f (target price = $%.2f) - %s\n", game.name, game.price, game.targetPrice, steamAppURL(game.id))
   }
   fmt.Fprintf(os.Stdout, "==================================================\n")
 }

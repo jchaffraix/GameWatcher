@@ -1,8 +1,8 @@
 package main
 
 import (
-  "bufio"
   "errors"
+  "encoding/csv"
   "fmt"
   "flag"
   "io"
@@ -15,15 +15,24 @@ import (
   "golang.org/x/net/html"
 )
 
-const cGameIdAttr string = "data-ds-appid"
-const cGameClassNameAttr string = "match_name"
-const cGameClassPriceAttr string = "match_price"
-const cSearchURLMissingKeyword string = "https://store.steampowered.com/search/suggest?term=%s&f=games&cc=US"
+const (
+  cGameIdAttr string = "data-ds-appid"
+  cGameClassNameAttr string = "match_name"
+  cGameClassPriceAttr string = "match_price"
+  cSearchURLMissingKeyword string = "https://store.steampowered.com/search/suggest?term=%s&f=games&cc=US"
+
+  cDefaultTargetPrice float32 = 7
+)
 
 type game struct {
   id int
   name string
   price float32
+}
+
+type gameData struct {
+  name string
+  targetPrice float32
 }
 
 func steamAppURL(id int) string {
@@ -149,28 +158,28 @@ func fetchGame(gameName string) (*game, error) {
   return game, nil
 }
 
-func gameWorker(c chan string, output *Output) {
+func gameWorker(c chan gameData, output *Output) {
   defer output.wg.Done()
-  for gameName := range(c) {
-    game, err := fetchGame(gameName)
+  for gameData := range(c) {
+    game, err := fetchGame(gameData.name)
     if err != nil {
-      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameName, err)
+      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", gameData.name, err)
       continue
     }
 
-    splitGameOnCriteria(game, output)
+    splitGameOnCriteria(game, gameData.targetPrice, output)
 
     if debug {
-      fmt.Println("Done for", gameName)
+      fmt.Println("Done for", gameData.name)
     }
   }
 }
 
-func splitGameOnCriteria(game * game, output *Output) {
+func splitGameOnCriteria(game * game, targetPrice float32, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
   // Simple price point right now.
-  if game.price < 7 {
+  if game.price < targetPrice {
     output.matchingGames = append(output.matchingGames, game)
     return
   }
@@ -212,7 +221,7 @@ func main() {
 
   args := flag.Args()
   if len(args) != 1 {
-    fmt.Printf("Usage: main file.txt\n\n\nFile contains one game name per line\n")
+    fmt.Printf("Usage: main file.txt\n\n\nFile contains one game name per line along with a potential target price divided by ','\nExample: Foobar, 10\n")
     return
   }
 
@@ -223,7 +232,7 @@ func main() {
   }
   defer file.Close()
 
-  c := make(chan string, parallelism)
+  c := make(chan gameData, parallelism)
   output := newOutput()
   output.wg.Add(parallelism)
 
@@ -234,14 +243,38 @@ func main() {
 
   // Feed the games as they are read.
   go func() {
-    scanner := bufio.NewScanner(file)
-    for scanner.Scan() {
-      c <- scanner.Text()
-    }
-    close(c)
+    // Ensure that we close c to avoid deadlocks in case of errors.
+    defer close(c)
 
-    if err := scanner.Err(); err != nil {
-      fmt.Fprintf(os.Stderr, "Error reading file = %s", args[0])
+    csvReader := csv.NewReader(file)
+    for {
+      records, err := csvReader.Read()
+      // Handle EOF as a special error.
+      if err == io.EOF {
+        return
+      }
+
+      // We want to allow an optional targetPrice.
+      // This means that we ignore ErrFieldCount errors by looking at the presence of `records`.
+      if err != nil && records == nil {
+        fmt.Fprintf(os.Stderr, "Error reading file = %s (err=%s)\n", args[0], err)
+        return
+      }
+      if len(records) == 0 {
+        panic("Invalid CSV file, no record on line")
+      }
+      gameName := records[0]
+      // Start with our default and override it if specified.
+      targetPrice := cDefaultTargetPrice
+      if len(records) == 2 {
+        tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), 32)
+        if err != nil {
+          fmt.Fprintf(os.Stderr, "Error reading file = %s, invalid price (err=%+v)\n", args[0], err)
+          return
+        }
+        targetPrice = float32(tmp)
+      }
+      c <- gameData{gameName, targetPrice}
     }
   }()
 

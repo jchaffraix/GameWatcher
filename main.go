@@ -8,6 +8,7 @@ import (
   "io"
   "net/http"
   "os"
+  "sort"
   "strconv"
   "strings"
   "sync"
@@ -217,6 +218,13 @@ type Output struct {
   wg sync.WaitGroup
 }
 
+// ByPrice implements sort.Interface for []game.
+type ByPrice []game
+func (a ByPrice) Len() int { return len(a) }
+func (a ByPrice) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByPrice) Less(i, j int) bool { return a[i].price < a[j].price }
+
+
 func newOutput() Output {
   return Output{[]game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
@@ -285,6 +293,10 @@ func main() {
   }()
 
   output.wg.Wait()
+
+  // Sort the output by price.
+  sort.Sort(ByPrice(output.matchingGames))
+  sort.Sort(ByPrice(output.otherGames))
 
   fmt.Fprintf(os.Stdout, "==================================================\n")
   fmt.Fprintf(os.Stdout, "============ Matching games ======================\n")

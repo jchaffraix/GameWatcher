@@ -128,7 +128,7 @@ func parseSearchResultsAndFillGame(game *game, reader io.Reader) error {
         if tagName == "a" {
           // We only care about the first result.
           if game.id == 0 || !hasParsedName {
-            panic("Couldn't parse " + game.name)
+            return errors.New("Couldn't parse " + game.name)
           }
 
           if game.price == 0 {

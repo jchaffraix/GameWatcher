@@ -42,6 +42,10 @@ type game struct {
 
   // Game price may be -1 if none was found (unreleased games).
   price float32
+}
+
+type gameCriteria struct {
+  name string
   targetPrice float32
 }
 
@@ -61,7 +65,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
   parsingState := lookingForGame
 
   games := []game{};
-  parsedGame := game{0, "", -1, 0};
+  parsedGame := game{0, "", -1};
 
   tokenizer := html.NewTokenizer(reader)
   for {
@@ -174,7 +178,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
             games = append(games, parsedGame)
           }
 
-          parsedGame = game{0, "", -1, 0}
+          parsedGame = game{0, "", -1}
           parsingState = lookingForGame
         }
     }
@@ -213,57 +217,55 @@ func selectBestMatchingGame(name string, games []game) *game {
   return bestMatchingGame
 }
 
-// TODO: Stop passing the full game as we populate multiple and select the one now.
-func fetchAndFillGame(game *game) error {
+func fetchAndFillGame(criteria gameCriteria) (error, *game) {
   if debugFlag {
-    fmt.Println("Fetching", game.name)
+    fmt.Println("Fetching", criteria.name)
   }
 
   // Steam uses '+' as delimiters for word in their calls.
-  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(game.name, " "), "+"))
+  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(criteria.name, " "), "+"))
   resp, err := http.Get(searchURL)
   if err != nil {
-    return err
+    return err, nil
   }
   defer resp.Body.Close()
 
-  err, games := parseSearchResult(game.name, resp.Body)
+  err, games := parseSearchResult(criteria.name, resp.Body)
   if err != nil {
-    return err
+    return err, nil
   }
 
-  // TODO: This is clunky, rework how we pass those arguments to allow a null return.
-  bestGame := selectBestMatchingGame(game.name, games)
-  if bestGame != nil {
-    game.id = bestGame.id
-    game.name = bestGame.name
-    game.price = bestGame.price
-  }
+  bestGame := selectBestMatchingGame(criteria.name, games)
 
   if debugFlag {
-    fmt.Println("Fetched", game.name)
+    fmt.Println("Done Fetching", criteria.name)
   }
-  return nil
+  return nil, bestGame
 }
 
-func gameWorker(c chan game, output *Output) {
+func gameWorker(c chan gameCriteria, output *Output) {
   defer output.wg.Done()
-  for game := range(c) {
-    err := fetchAndFillGame(&game)
+  for criteria := range(c) {
+    err, game := fetchAndFillGame(criteria)
     if err != nil {
-      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", game.name, err)
+      fmt.Fprintf(os.Stderr, "Error fetching game \"%s\" (err = %+v)\n", criteria.name, err)
       continue
     }
 
-    splitGameOnCriteria(game, output)
+    if game == nil {
+      fmt.Fprintf(os.Stderr, "No matches for \"%s\" (err = %+v)\n", criteria.name)
+      continue
+    }
+
+    splitGameOnCriteria(*game, criteria.targetPrice, output)
 
     if debugFlag {
-      fmt.Println("Done for", game.name)
+      fmt.Println("Done for", criteria.name)
     }
   }
 }
 
-func splitGameOnCriteria(game game, output *Output) {
+func splitGameOnCriteria(game game, targetPrice float32, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
 
@@ -273,11 +275,17 @@ func splitGameOnCriteria(game game, output *Output) {
   }
 
   // Simple price point right now.
-  if game.price < game.targetPrice {
+  if game.price < targetPrice {
+    if debugFlag {
+      fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v matched targetPrice = %v\n", game.name, game.price, targetPrice)
+    }
     output.matchingGames = append(output.matchingGames, game)
     return
   }
 
+  if debugFlag {
+    fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v was over targetPrice = %v\n", game.name, game.price, targetPrice)
+  }
   output.otherGames = append(output.otherGames, game)
 }
 
@@ -319,7 +327,7 @@ func newOutput() Output {
   return Output{[]game{}, []game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
 
-func feedGamesFromFile(fileName string, c chan game) error {
+func feedGamesFromFile(fileName string, c chan gameCriteria) error {
   file, err := os.Open(fileName)
   if err != nil {
     return err
@@ -358,14 +366,14 @@ func feedGamesFromFile(fileName string, c chan game) error {
         }
         targetPrice = float32(tmp)
       }
-      c <- game{/*id=*/0, gameName, /*price=*/0, targetPrice}
+      c <- gameCriteria{gameName, targetPrice}
     }
   }()
 
   return nil
 }
 
-func feedGamesFromFlag(games string, c chan game) error {
+func feedGamesFromFlag(games string, c chan gameCriteria) error {
 
   go func() {
     // Ensure that we close c to avoid deadlocks in case of errors.
@@ -386,7 +394,7 @@ func feedGamesFromFlag(games string, c chan game) error {
           idx += 1
         }
       }
-      c <- game{/*id=*/0, gameName, /*price=*/0, targetPrice}
+      c <- gameCriteria{gameName, targetPrice}
     }
   }()
 
@@ -405,7 +413,7 @@ func main() {
     return
   }
 
-  c := make(chan game, parallelism)
+  c := make(chan gameCriteria, parallelism)
   output := newOutput()
   output.wg.Add(parallelism)
 
@@ -435,24 +443,31 @@ func main() {
   sort.Sort(ByPrice(output.matchingGames))
   sort.Sort(ByPrice(output.otherGames))
 
-  fmt.Fprintf(os.Stdout, "==================================================\n")
-  fmt.Fprintf(os.Stdout, "============== Unreleased games ==================\n")
-  fmt.Fprintf(os.Stdout, "==================================================\n")
-  for _, game := range output.unreleasedGames {
-    fmt.Fprintf(os.Stdout, "%s (target price = $%.2f) - %s \n", game.name, game.targetPrice, steamAppURL(game.id))
+  if len(output.unreleasedGames) > 0 {
+    fmt.Fprintf(os.Stdout, "==================================================\n")
+    fmt.Fprintf(os.Stdout, "============== Unreleased games ==================\n")
+    fmt.Fprintf(os.Stdout, "==================================================\n")
+    for _, game := range output.unreleasedGames {
+      fmt.Fprintf(os.Stdout, "%s - %s \n", game.name, steamAppURL(game.id))
+    }
+    fmt.Fprintf(os.Stdout, "\n\n")
   }
 
-  fmt.Fprintf(os.Stdout, "\n\n")
-  fmt.Fprintf(os.Stdout, "==================================================\n")
-  fmt.Fprintf(os.Stdout, "================= Matching games =================\n")
-  fmt.Fprintf(os.Stdout, "==================================================\n")
-  for _, game := range output.matchingGames {
-    fmt.Fprintf(os.Stdout, "%s: $%.2f (target price = $%.2f) - %s \n", game.name, game.price, game.targetPrice, steamAppURL(game.id))
+  if len(output.matchingGames) > 0 {
+    fmt.Fprintf(os.Stdout, "==================================================\n")
+    fmt.Fprintf(os.Stdout, "============== Games under target ================\n")
+    fmt.Fprintf(os.Stdout, "==================================================\n")
+    for _, game := range output.matchingGames {
+      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.price, steamAppURL(game.id))
+    }
+    fmt.Fprintf(os.Stdout, "\n\n")
   }
-  fmt.Fprintf(os.Stdout, "\n\n==================================================\n")
 
+  fmt.Fprintf(os.Stdout, "==================================================\n")
+  fmt.Fprintf(os.Stdout, "=============== Games over target ================\n")
+  fmt.Fprintf(os.Stdout, "==================================================\n")
   for _, game := range output.otherGames {
-    fmt.Fprintf(os.Stdout, "%s: $%.2f (target price = $%.2f) - %s\n", game.name, game.price, game.targetPrice, steamAppURL(game.id))
+    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.price, steamAppURL(game.id))
   }
   fmt.Fprintf(os.Stdout, "==================================================\n")
 }

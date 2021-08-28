@@ -25,6 +25,17 @@ const (
   cDefaultTargetPrice float32 = 7
 )
 
+// States for our parser.
+const (
+  lookingForGame = iota
+  inGameLookingForName = iota
+  inGameParsingName = iota
+  inGameLookingForPrice = iota
+  inGameParsingPrice = iota
+  // Used when done parsing to reset back on the end anchor tag.
+  lookingForEndOfCurrentGame = iota
+)
+
 type game struct {
   id int
   name string
@@ -36,50 +47,61 @@ func steamAppURL(id int) string {
   return fmt.Sprintf("https://store.steampowered.com/app/%d", id)
 }
 
-func parseSearchResultsAndFillGame(game *game, reader io.Reader) error {
+func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
   // Steam results are formatted as follows:
-  // * Each result (game) is an anchor
-  // * Under each anchor, there is an image and the price.
+  // * Each result (game) is an anchor tag that contains the game id.
+  // * Under each anchor, there is the name, an image and the price.
+  // We ignore the image and extract the name and price.
 
   // We don't use html.Parse as it just generates the extra
   // tags mandated by the HTML5 page (<body>, ...).
 
-  // TODO: Switch to a real state machine.
-  isParsingPrice := false
-  isParsingName := false
-  hasParsedName := false
+  parsingState := lookingForGame
+
+  games := []game{};
+  parsedGame := game{0, "", -1, 0};
+
   tokenizer := html.NewTokenizer(reader)
   for {
     tt := tokenizer.Next()
+
     switch tt {
       case html.ErrorToken:
-        return tokenizer.Err()
+        err := tokenizer.Err()
+        // Check that this is a real error.
+        if err != io.EOF {
+          return err, games
+        }
+
+        return nil, games
+
       case html.TextToken:
-        if isParsingPrice {
-          // We drop the first letter as it is the price.
-          priceStr := string(tokenizer.Text())[1:]
-          price, err := strconv.ParseFloat(priceStr, /*bitSize=*/32)
-          if err != nil {
-            return errors.New("Couldn't convert text to price (" + priceStr + ")")
-          }
-          game.price = float32(price)
-
-          isParsingPrice = false
+        if debug {
+          fmt.Fprintf(os.Stdout, "Intext, parsingState = %+v\n", parsingState)
         }
-        if isParsingName {
-          // We drop the first letter as it is the price.
+        switch parsingState {
+          case inGameParsingPrice:
+            priceStr := string(tokenizer.Text())
+            if priceStr == "Free" {
+              parsedGame.price = 0
+            } else {
+              // We drop the first letter as it is the price currency.
+              priceStr := priceStr[1:]
+              price, err := strconv.ParseFloat(priceStr, /*bitSize=*/32)
+              if err != nil {
+                return errors.New("Couldn't convert text to price (" + priceStr + ")"), games
+              }
+              parsedGame.price = float32(price)
+            }
 
-          // We override the name so that we present an accurate summary
-          // at the end.
-          //
-          // Ideally we would validate that the names are related but it
-          // is hard as Steam does some smart matching.
-          // TODO: Add this validation.
-          game.name =string(tokenizer.Text())
-
-          isParsingName = false
-          hasParsedName = true
+            parsingState = lookingForEndOfCurrentGame
+            break
+          case inGameParsingName:
+            parsedGame.name = string(tokenizer.Text())
+            parsingState = inGameLookingForPrice
+            break
         }
+        break
       case html.StartTagToken:
         tn, _ := tokenizer.TagName()
         tagName := string(tn)
@@ -87,13 +109,18 @@ func parseSearchResultsAndFillGame(game *game, reader io.Reader) error {
           case "a":
             // Start of a game entry.
             // We are looking for the attribute with the appId
+            if debug {
+              fmt.Fprintf(os.Stdout, "Start of anchor, parsingState = %+v\n", parsingState)
+            }
             for {
               attrName, attrValue, more := tokenizer.TagAttr();
+              // TODO: Support bundle ID.
+              // We can either store the bundle separately (URL: https://store.steampowered.com/bundle/%d) or store the URL.
               if string(attrName) == cGameIdAttr {
                 var err error
-                game.id, err = strconv.Atoi(string(attrValue))
+                parsedGame.id, err = strconv.Atoi(string(attrValue))
                 if err != nil {
-                  return errors.New("Couldn't convert attribute to id (" + string(attrValue) + ")")
+                  return errors.New("Couldn't convert attribute to id (" + string(attrValue) + ")"), games
                 }
                 break
               }
@@ -101,22 +128,32 @@ func parseSearchResultsAndFillGame(game *game, reader io.Reader) error {
                 break
               }
             }
+            parsingState = inGameParsingName
             break
           case "div":
+            if debug {
+              fmt.Fprintf(os.Stdout, "Start of div, parsingState = %+v\n", parsingState)
+            }
             for {
               attrName, attrValue, more := tokenizer.TagAttr();
+              oldParsingState := parsingState
               if string(attrName) == "class" {
                 attrValueStr := string(attrValue)
-                if attrValueStr == cGameClassPriceAttr {
-                  isParsingPrice = true
-                  break
-                }
-                if attrValueStr == cGameClassNameAttr {
-                  isParsingName = true
-                  break
+                switch parsingState {
+                  case inGameLookingForPrice:
+                    if attrValueStr == cGameClassPriceAttr {
+                      parsingState = inGameParsingPrice
+                    }
+                    break
+                  case inGameLookingForName:
+                    if attrValueStr == cGameClassNameAttr {
+                      parsingState = inGameParsingName
+                    }
+                    break
                 }
               }
-              if more == false {
+
+              if oldParsingState != parsingState || more == false {
                 break
               }
             }
@@ -126,21 +163,55 @@ func parseSearchResultsAndFillGame(game *game, reader io.Reader) error {
         tn, _ := tokenizer.TagName()
         tagName := string(tn)
         if tagName == "a" {
-          // We only care about the first result.
-          if game.id == 0 || !hasParsedName {
-            return errors.New("Couldn't parse " + game.name)
+          if debug {
+            fmt.Fprintf(os.Stdout, "End of parsing game, got: %+v\n", parsedGame)
+          }
+          if parsedGame.id == 0 || parsedGame.name == "" || parsedGame.price == -1 {
+            fmt.Fprintf(os.Stderr, "Dropping partially parsed game: %+v (is it out yet?)\n", parsedGame)
+          } else {
+            games = append(games, parsedGame)
           }
 
-          if game.price == 0 {
-            return errors.New("Game is missing price (is it out yet?)")
-          }
-
-          return nil
+          parsedGame = game{0, "", -1, 0}
+          parsingState = lookingForGame
         }
     }
   }
 }
 
+func selectBestMatchingGame(name string, games []game) *game {
+  if len(games) == 0 {
+    return nil
+  }
+
+  var bestMatchingGame *game = nil
+  for idx, game := range(games) {
+    // If this is a direct match for the name, stop.
+    // This prevent unrelated matches to show up, especially for unreleased games.
+    if strings.ToLower(game.name) == strings.ToLower(name) {
+      // We can't use |game| here as it is temporary variable.
+      bestMatchingGame = &games[idx]
+      break
+    }
+
+    if strings.Contains(game.name, "Soundtrack") || strings.Contains(game.name, "OST") {
+      continue
+    }
+
+    // Ignore demos.
+    if game.price == 0 {
+      continue
+    }
+
+    // We can't use |game| here as it is temporary variable.
+    bestMatchingGame = &games[idx]
+
+  }
+
+  return bestMatchingGame
+}
+
+// TODO: Stop passing the full game as we populate multiple and select the one now.
 func fetchAndFillGame(game *game) error {
   if debug {
     fmt.Println("Fetching", game.name)
@@ -154,9 +225,17 @@ func fetchAndFillGame(game *game) error {
   }
   defer resp.Body.Close()
 
-  err = parseSearchResultsAndFillGame(game, resp.Body)
+  err, games := parseSearchResult(game.name, resp.Body)
   if err != nil {
     return err
+  }
+
+  // TODO: This is clunky, rework how we pass those arguments to allow a null return.
+  bestGame := selectBestMatchingGame(game.name, games)
+  if bestGame != nil {
+    game.id = bestGame.id
+    game.name = bestGame.name
+    game.price = bestGame.price
   }
 
   if debug {

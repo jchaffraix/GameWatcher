@@ -39,6 +39,8 @@ const (
 type game struct {
   id int
   name string
+
+  // Game price may be -1 if none was found (unreleased games).
   price float32
   targetPrice float32
 }
@@ -166,8 +168,8 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
           if debugFlag {
             fmt.Fprintf(os.Stdout, "End of parsing game, got: %+v\n", parsedGame)
           }
-          if parsedGame.id == 0 || parsedGame.name == "" || parsedGame.price == -1 {
-            fmt.Fprintf(os.Stderr, "Dropping partially parsed game: %+v (is it out yet?)\n", parsedGame)
+          if parsedGame.id == 0 || parsedGame.name == "" {
+            fmt.Fprintf(os.Stderr, "Dropping partially parsed game: %+v\n", parsedGame)
           } else {
             games = append(games, parsedGame)
           }
@@ -264,6 +266,12 @@ func gameWorker(c chan game, output *Output) {
 func splitGameOnCriteria(game game, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
+
+  if game.price == -1 {
+    output.unreleasedGames = append(output.unreleasedGames, game)
+    return
+  }
+
   // Simple price point right now.
   if game.price < game.targetPrice {
     output.matchingGames = append(output.matchingGames, game)
@@ -292,6 +300,7 @@ type Output struct {
   // TODO: Think about this more. Maybe we can
   // figure out how to use a single output channel
   // (maybe by annotating the game struct?).
+  unreleasedGames []game
   matchingGames []game
   otherGames []game
   m sync.Mutex
@@ -307,7 +316,7 @@ func (a ByPrice) Less(i, j int) bool { return a[i].price < a[j].price }
 
 
 func newOutput() Output {
-  return Output{[]game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
+  return Output{[]game{}, []game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
 
 func feedGamesFromFile(fileName string, c chan game) error {
@@ -427,7 +436,15 @@ func main() {
   sort.Sort(ByPrice(output.otherGames))
 
   fmt.Fprintf(os.Stdout, "==================================================\n")
-  fmt.Fprintf(os.Stdout, "============ Matching games ======================\n")
+  fmt.Fprintf(os.Stdout, "============== Unreleased games ==================\n")
+  fmt.Fprintf(os.Stdout, "==================================================\n")
+  for _, game := range output.unreleasedGames {
+    fmt.Fprintf(os.Stdout, "%s (target price = $%.2f) - %s \n", game.name, game.targetPrice, steamAppURL(game.id))
+  }
+
+  fmt.Fprintf(os.Stdout, "\n\n")
+  fmt.Fprintf(os.Stdout, "==================================================\n")
+  fmt.Fprintf(os.Stdout, "================= Matching games =================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")
   for _, game := range output.matchingGames {
     fmt.Fprintf(os.Stdout, "%s: $%.2f (target price = $%.2f) - %s \n", game.name, game.price, game.targetPrice, steamAppURL(game.id))

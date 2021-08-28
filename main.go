@@ -76,7 +76,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
         return nil, games
 
       case html.TextToken:
-        if debug {
+        if debugFlag {
           fmt.Fprintf(os.Stdout, "Intext, parsingState = %+v\n", parsingState)
         }
         switch parsingState {
@@ -109,7 +109,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
           case "a":
             // Start of a game entry.
             // We are looking for the attribute with the appId
-            if debug {
+            if debugFlag {
               fmt.Fprintf(os.Stdout, "Start of anchor, parsingState = %+v\n", parsingState)
             }
             for {
@@ -131,7 +131,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
             parsingState = inGameParsingName
             break
           case "div":
-            if debug {
+            if debugFlag {
               fmt.Fprintf(os.Stdout, "Start of div, parsingState = %+v\n", parsingState)
             }
             for {
@@ -163,7 +163,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
         tn, _ := tokenizer.TagName()
         tagName := string(tn)
         if tagName == "a" {
-          if debug {
+          if debugFlag {
             fmt.Fprintf(os.Stdout, "End of parsing game, got: %+v\n", parsedGame)
           }
           if parsedGame.id == 0 || parsedGame.name == "" || parsedGame.price == -1 {
@@ -213,7 +213,7 @@ func selectBestMatchingGame(name string, games []game) *game {
 
 // TODO: Stop passing the full game as we populate multiple and select the one now.
 func fetchAndFillGame(game *game) error {
-  if debug {
+  if debugFlag {
     fmt.Println("Fetching", game.name)
   }
 
@@ -238,7 +238,7 @@ func fetchAndFillGame(game *game) error {
     game.price = bestGame.price
   }
 
-  if debug {
+  if debugFlag {
     fmt.Println("Fetched", game.name)
   }
   return nil
@@ -255,7 +255,7 @@ func gameWorker(c chan game, output *Output) {
 
     splitGameOnCriteria(game, output)
 
-    if debug {
+    if debugFlag {
       fmt.Println("Done for", game.name)
     }
   }
@@ -273,7 +273,9 @@ func splitGameOnCriteria(game game, output *Output) {
   output.otherGames = append(output.otherGames, game)
 }
 
-var debug bool
+var debugFlag bool
+var gamesFlag string
+var fileFlag string
 var parallelism int = 10
 
 type Output struct {
@@ -308,36 +310,16 @@ func newOutput() Output {
   return Output{[]game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
 
-func main() {
-  flag.BoolVar(&debug, "debug", false, "Enable debug statements")
-  flag.Parse()
-
-  args := flag.Args()
-  if len(args) != 1 {
-    fmt.Printf("Usage: main file.txt\n\n\nFile contains one game name per line along with a potential target price divided by ','\nExample: Foobar, 10\n")
-    return
-  }
-
-  file, err := os.Open(args[0])
+func feedGamesFromFile(fileName string, c chan game) error {
+  file, err := os.Open(fileName)
   if err != nil {
-    fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", args[0], err)
-    return
-  }
-  defer file.Close()
-
-  c := make(chan game, parallelism)
-  output := newOutput()
-  output.wg.Add(parallelism)
-
-  // Start the workers.
-  for i := 0; i < parallelism; i++ {
-      go gameWorker(c, &output)
+    return err
   }
 
-  // Feed the games as they are read.
   go func() {
     // Ensure that we close c to avoid deadlocks in case of errors.
     defer close(c)
+    defer file.Close()
 
     csvReader := csv.NewReader(file)
     for {
@@ -350,7 +332,7 @@ func main() {
       // We want to allow an optional targetPrice.
       // This means that we ignore ErrFieldCount errors by looking at the presence of `records`.
       if err != nil && records == nil {
-        fmt.Fprintf(os.Stderr, "Error reading file = %s (err=%s)\n", args[0], err)
+        fmt.Fprintf(os.Stderr, "Error reading file = %s (err=%s)\n", fileName, err)
         return
       }
       if len(records) == 0 {
@@ -362,7 +344,7 @@ func main() {
       if len(records) == 2 {
         tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), /*bitSize=*/32)
         if err != nil {
-          fmt.Fprintf(os.Stderr, "Error reading file = %s, invalid price (err=%+v)\n", args[0], err)
+          fmt.Fprintf(os.Stderr, "Error reading file = %s, invalid price (err=%+v)\n", fileName, err)
           return
         }
         targetPrice = float32(tmp)
@@ -370,6 +352,73 @@ func main() {
       c <- game{/*id=*/0, gameName, /*price=*/0, targetPrice}
     }
   }()
+
+  return nil
+}
+
+func feedGamesFromFlag(games string, c chan game) error {
+
+  go func() {
+    // Ensure that we close c to avoid deadlocks in case of errors.
+    defer close(c)
+
+    tokens := strings.Split(games, ",")
+    idx := 0
+    for ; idx < len(tokens); idx++ {
+      gameName := tokens[idx];
+      // Start with our default and override it if specified.
+      targetPrice := cDefaultTargetPrice
+      if idx < len(tokens) - 1 {
+        lookAheadToken := tokens[idx + 1]
+        tmp, err := strconv.ParseFloat(lookAheadToken, /*bitSize=*/32)
+        if err == nil {
+          targetPrice = float32(tmp)
+          // Skip next token as it was an optional price.
+          idx += 1
+        }
+      }
+      c <- game{/*id=*/0, gameName, /*price=*/0, targetPrice}
+    }
+  }()
+
+  return nil
+}
+
+func main() {
+  flag.BoolVar(&debugFlag, "debug", false, "Enable debug statements")
+  flag.StringVar(&gamesFlag, "games", "", "Commad separated list of games to fetch")
+  flag.StringVar(&fileFlag, "file", "", "File containing a CSV list of games")
+  flag.Parse()
+
+  args := flag.Args()
+  if gamesFlag == "" && fileFlag == "" || (gamesFlag != "" && fileFlag != "") {
+    fmt.Printf("Usage: main [-debug] [-file <file>] [-games game1,7,game2,game3]\n\n\nEither -file or -games must be set, but not both.\n\n<file> contains one game name per line along with a potential target price divided by ','\nExample: Foobar, 10\n")
+    return
+  }
+
+  c := make(chan game, parallelism)
+  output := newOutput()
+  output.wg.Add(parallelism)
+
+  // Start the workers.
+  for i := 0; i < parallelism; i++ {
+      go gameWorker(c, &output)
+  }
+
+  // Feed the games as they are read.
+  if (fileFlag != "") {
+    err := feedGamesFromFile(fileFlag, c)
+    if err != nil {
+      fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", args[0], err)
+      return
+    }
+  } else {
+    err := feedGamesFromFlag(gamesFlag, c)
+    if err != nil {
+      fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", args[0], err)
+      return
+    }
+  }
 
   output.wg.Wait()
 

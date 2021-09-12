@@ -88,16 +88,17 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
         switch parsingState {
           case inGameParsingPrice:
             priceStr := string(tokenizer.Text())
-            if priceStr == "Free" {
+            if strings.Contains(priceStr, "Free") {
               parsedGame.price = 0
             } else {
-              // We drop the first letter as it is the price currency.
+              // We drop the first letter as it is the currency.
               priceStr := priceStr[1:]
               price, err := strconv.ParseFloat(priceStr, /*bitSize=*/32)
               if err != nil {
-                return errors.New("Couldn't convert text to price (" + priceStr + ")"), games
+                fmt.Fprintf(os.Stderr, "Couldn't convert text to price (" + priceStr + ")\n")
+              } else {
+                parsedGame.price = float32(price)
               }
-              parsedGame.price = float32(price)
             }
 
             parsingState = lookingForEndOfCurrentGame
@@ -123,10 +124,11 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
               // TODO: Support bundle ID.
               // We can either store the bundle separately (URL: https://store.steampowered.com/bundle/%d) or store the URL.
               if string(attrName) == cGameIdAttr {
+                idStr := string(attrValue)
                 var err error
-                parsedGame.id, err = strconv.Atoi(string(attrValue))
+                parsedGame.id, err = strconv.Atoi(idStr)
                 if err != nil {
-                  return errors.New("Couldn't convert attribute to id (" + string(attrValue) + ")"), games
+                  return errors.New("Couldn't convert attribute to id (" + idStr + ")"), games
                 }
                 break
               }
@@ -201,6 +203,10 @@ func selectBestMatchingGame(name string, games []game) *game {
     }
 
     if strings.Contains(game.name, "Soundtrack") || strings.Contains(game.name, "OST") {
+      continue
+    }
+
+    if strings.Contains(game.name, "Artbook") {
       continue
     }
 
@@ -316,12 +322,21 @@ type Output struct {
   wg sync.WaitGroup
 }
 
-// ByPrice implements sort.Interface for []game.
-type ByPrice []game
-func (a ByPrice) Len() int { return len(a) }
-func (a ByPrice) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByPrice) Less(i, j int) bool { return a[i].price < a[j].price }
+// ByPriceThenName implements sort.Interface for []game.
+type ByPriceThenName []game
+func (a ByPriceThenName) Len() int { return len(a) }
+func (a ByPriceThenName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByPriceThenName) Less(i, j int) bool {
+  if (a[i].price < a[j].price) {
+    return true;
+  }
 
+  if (a[i].price > a[j].price) {
+    return false;
+  }
+
+  return a[i].name < a[j].name
+}
 
 func newOutput() Output {
   return Output{[]game{}, []game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
@@ -439,9 +454,11 @@ func main() {
 
   output.wg.Wait()
 
-  // Sort the output by price.
-  sort.Sort(ByPrice(output.matchingGames))
-  sort.Sort(ByPrice(output.otherGames))
+  // Sort the output by price, then name.
+  // This gives a stable sort for quickly assessing games.
+  sort.Sort(ByPriceThenName(output.unreleasedGames))
+  sort.Sort(ByPriceThenName(output.matchingGames))
+  sort.Sort(ByPriceThenName(output.otherGames))
 
   if len(output.unreleasedGames) > 0 {
     fmt.Fprintf(os.Stdout, "==================================================\n")

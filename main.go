@@ -210,6 +210,10 @@ func selectBestMatchingGame(name string, games []game) *game {
       continue
     }
 
+    if strings.Contains(game.name, "Adventure Pack") || strings.Contains(game.name, "Season Pass") {
+      continue
+    }
+
     // Ignore demos.
     if game.price == 0 {
       continue
@@ -217,7 +221,6 @@ func selectBestMatchingGame(name string, games []game) *game {
 
     // We can't use |game| here as it is temporary variable.
     bestMatchingGame = &games[idx]
-
   }
 
   return bestMatchingGame

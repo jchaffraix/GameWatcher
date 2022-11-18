@@ -219,6 +219,11 @@ func selectBestMatchingGame(name string, games []game) *game {
       continue
     }
 
+    // We select the shortest name as it removes all the DLC.
+    if bestMatchingGame != nil && len(game.name) >= len(bestMatchingGame.name) {
+      continue
+    }
+
     // We can't use |game| here as it is temporary variable.
     bestMatchingGame = &games[idx]
   }

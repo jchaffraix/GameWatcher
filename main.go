@@ -18,6 +18,7 @@ import (
 
 const (
   cGameIdAttr string = "data-ds-appid"
+  cGameBundleIdAttr string = "data-ds-bundleid"
   cGameClassNameAttr string = "match_name"
   cGameClassPriceAttr string = "match_price"
   cSearchURLMissingKeyword string = "https://store.steampowered.com/search/suggest?term=%s&f=games&cc=US"
@@ -30,6 +31,7 @@ const (
   lookingForGame = iota
   inGameLookingForName = iota
   inGameParsingName = iota
+  inGameParsingBundleName = iota
   inGameLookingForPrice = iota
   inGameParsingPrice = iota
   // Used when done parsing to reset back on the end anchor tag.
@@ -37,20 +39,30 @@ const (
 )
 
 type game struct {
+  // Either id (regular game) or bundleId (for bundles) will be ever set.
   id int
+  bundleId int
   name string
 
   // Game price may be -1 if none was found (unreleased games).
   price float32
 }
 
+func (g game) steamURL() string {
+  if g.bundleId != 0 && g.id != 0 {
+    panic(fmt.Sprintf("Game is both a regular game and a bundle: %+v", g))
+  }
+
+  if g.bundleId != 0 {
+    return fmt.Sprintf("https://store.steampowered.com/bundle/%d", g.bundleId)
+  }
+
+  return fmt.Sprintf("https://store.steampowered.com/app/%d", g.id)
+}
+
 type gameCriteria struct {
   name string
   targetPrice float32
-}
-
-func steamAppURL(id int) string {
-  return fmt.Sprintf("https://store.steampowered.com/app/%d", id)
 }
 
 func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
@@ -65,7 +77,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
   parsingState := lookingForGame
 
   games := []game{};
-  parsedGame := game{0, "", -1};
+  parsedGame := game{0, 0, "", -1};
 
   tokenizer := html.NewTokenizer(reader)
   for {
@@ -104,6 +116,16 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
             parsingState = lookingForEndOfCurrentGame
             break
           case inGameParsingName:
+            if parsedGame.bundleId != 0 {
+              panic("Parsing bundle as regular game!")
+            }
+            parsedGame.name = string(tokenizer.Text())
+            parsingState = inGameLookingForPrice
+            break
+          case inGameParsingBundleName:
+            if parsedGame.id != 0 {
+              panic("Parsing regular game as bundle!")
+            }
             parsedGame.name = string(tokenizer.Text())
             parsingState = inGameLookingForPrice
             break
@@ -121,22 +143,27 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
             }
             for {
               attrName, attrValue, more := tokenizer.TagAttr();
-              // TODO: Support bundle ID.
-              // We can either store the bundle separately (URL: https://store.steampowered.com/bundle/%d) or store the URL.
-              if string(attrName) == cGameIdAttr {
+              if string(attrName) == cGameIdAttr || string(attrName) == cGameBundleIdAttr {
                 idStr := string(attrValue)
                 var err error
-                parsedGame.id, err = strconv.Atoi(idStr)
+                parsedId, err := strconv.Atoi(idStr)
                 if err != nil {
                   return errors.New("Couldn't convert attribute to id (" + idStr + ")"), games
                 }
+                if string(attrName) == cGameIdAttr {
+                  parsedGame.id = parsedId
+                  parsingState = inGameParsingName
+                } else {
+                  parsedGame.bundleId = parsedId
+                  parsingState = inGameParsingBundleName
+                }
+
                 break
               }
               if more == false {
                 break
               }
             }
-            parsingState = inGameParsingName
             break
           case "div":
             if debugFlag {
@@ -174,13 +201,13 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
           if debugFlag {
             fmt.Fprintf(os.Stdout, "End of parsing game, got: %+v\n", parsedGame)
           }
-          if parsedGame.id == 0 || parsedGame.name == "" {
+          if (parsedGame.id == 0 && parsedGame.bundleId == 0) || parsedGame.name == "" {
             fmt.Fprintf(os.Stderr, "Dropping partially parsed game: %+v\n", parsedGame)
           } else {
             games = append(games, parsedGame)
           }
 
-          parsedGame = game{0, "", -1}
+          parsedGame = game{0, 0, "", -1}
           parsingState = lookingForGame
         }
     }
@@ -473,7 +500,7 @@ func main() {
     fmt.Fprintf(os.Stdout, "============== Unreleased games ==================\n")
     fmt.Fprintf(os.Stdout, "==================================================\n")
     for _, game := range output.unreleasedGames {
-      fmt.Fprintf(os.Stdout, "%s - %s \n", game.name, steamAppURL(game.id))
+      fmt.Fprintf(os.Stdout, "%s - %s \n", game.name, game.steamURL())
     }
     fmt.Fprintf(os.Stdout, "\n\n")
   }
@@ -483,7 +510,7 @@ func main() {
     fmt.Fprintf(os.Stdout, "============== Games under target ================\n")
     fmt.Fprintf(os.Stdout, "==================================================\n")
     for _, game := range output.matchingGames {
-      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.price, steamAppURL(game.id))
+      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.price, game.steamURL())
     }
     fmt.Fprintf(os.Stdout, "\n\n")
   }
@@ -492,7 +519,7 @@ func main() {
   fmt.Fprintf(os.Stdout, "=============== Games over target ================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")
   for _, game := range output.otherGames {
-    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.price, steamAppURL(game.id))
+    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.price, game.steamURL())
   }
   fmt.Fprintf(os.Stdout, "==================================================\n")
 }

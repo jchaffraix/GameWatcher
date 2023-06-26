@@ -32,6 +32,8 @@ type FanaticalInfo struct {
 }
 
 type Game struct {
+  // The name of the game in Steam.
+  // This is used by the Fanatical backend to associate result (there is no ID we can use).
   name string
 
   minPrice float32

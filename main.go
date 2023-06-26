@@ -1,44 +1,19 @@
 package main
 
 import (
-  "errors"
   "encoding/csv"
   "fmt"
   "flag"
   "io"
-  "net/http"
   "os"
   "sort"
   "strconv"
   "strings"
   "sync"
-
-  "golang.org/x/net/html"
 )
 
-const (
-  cGameIdAttr string = "data-ds-appid"
-  cGameBundleIdAttr string = "data-ds-bundleid"
-  cGameClassNameAttr string = "match_name"
-  cGameClassPriceAttr string = "match_price"
-  cSearchURLMissingKeyword string = "https://store.steampowered.com/search/suggest?term=%s&f=games&cc=US"
-
-  cDefaultTargetPrice float32 = 7
-)
-
-// States for our parser.
-const (
-  lookingForGame = iota
-  inGameLookingForName = iota
-  inGameParsingName = iota
-  inGameParsingBundleName = iota
-  inGameLookingForPrice = iota
-  inGameParsingPrice = iota
-  // Used when done parsing to reset back on the end anchor tag.
-  lookingForEndOfCurrentGame = iota
-)
-
-type game struct {
+// TODO: This needs to go to its own file no?
+type Game struct {
   // Either id (regular game) or bundleId (for bundles) will be ever set.
   id int
   bundleId int
@@ -48,7 +23,7 @@ type game struct {
   price float32
 }
 
-func (g game) steamURL() string {
+func (g Game) steamURL() string {
   if g.bundleId != 0 && g.id != 0 {
     panic(fmt.Sprintf("Game is both a regular game and a bundle: %+v", g))
   }
@@ -65,223 +40,21 @@ type gameCriteria struct {
   targetPrice float32
 }
 
-func parseSearchResult(gameName string, reader io.Reader) (error, []game) {
-  // Steam results are formatted as follows:
-  // * Each result (game) is an anchor tag that contains the game id.
-  // * Under each anchor, there is the name, an image and the price.
-  // We ignore the image and extract the name and price.
-
-  // We don't use html.Parse as it just generates the extra
-  // tags mandated by the HTML5 page (<body>, ...).
-
-  parsingState := lookingForGame
-
-  games := []game{};
-  parsedGame := game{0, 0, "", -1};
-
-  tokenizer := html.NewTokenizer(reader)
-  for {
-    tt := tokenizer.Next()
-
-    switch tt {
-      case html.ErrorToken:
-        err := tokenizer.Err()
-        // Check that this is a real error.
-        if err != io.EOF {
-          return err, games
-        }
-
-        return nil, games
-
-      case html.TextToken:
-        if debugFlag {
-          fmt.Fprintf(os.Stdout, "Intext, parsingState = %+v\n", parsingState)
-        }
-        switch parsingState {
-          case inGameParsingPrice:
-            priceStr := string(tokenizer.Text())
-            if strings.Contains(priceStr, "Free") {
-              parsedGame.price = 0
-            } else {
-              // We drop the first letter as it is the currency.
-              priceStr := priceStr[1:]
-              price, err := strconv.ParseFloat(priceStr, /*bitSize=*/32)
-              if err != nil {
-                fmt.Fprintf(os.Stderr, "Couldn't convert text to price (" + priceStr + ")\n")
-              } else {
-                parsedGame.price = float32(price)
-              }
-            }
-
-            parsingState = lookingForEndOfCurrentGame
-            break
-          case inGameParsingName:
-            if parsedGame.bundleId != 0 {
-              panic("Parsing bundle as regular game!")
-            }
-            parsedGame.name = string(tokenizer.Text())
-            parsingState = inGameLookingForPrice
-            break
-          case inGameParsingBundleName:
-            if parsedGame.id != 0 {
-              panic("Parsing regular game as bundle!")
-            }
-            parsedGame.name = string(tokenizer.Text())
-            parsingState = inGameLookingForPrice
-            break
-        }
-        break
-      case html.StartTagToken:
-        tn, _ := tokenizer.TagName()
-        tagName := string(tn)
-        switch tagName {
-          case "a":
-            // Start of a game entry.
-            // We are looking for the attribute with the appId
-            if debugFlag {
-              fmt.Fprintf(os.Stdout, "Start of anchor, parsingState = %+v\n", parsingState)
-            }
-            for {
-              attrName, attrValue, more := tokenizer.TagAttr();
-              if string(attrName) == cGameIdAttr || string(attrName) == cGameBundleIdAttr {
-                idStr := string(attrValue)
-                var err error
-                parsedId, err := strconv.Atoi(idStr)
-                if err != nil {
-                  return errors.New("Couldn't convert attribute to id (" + idStr + ")"), games
-                }
-                if string(attrName) == cGameIdAttr {
-                  parsedGame.id = parsedId
-                  parsingState = inGameParsingName
-                } else {
-                  parsedGame.bundleId = parsedId
-                  parsingState = inGameParsingBundleName
-                }
-
-                break
-              }
-              if more == false {
-                break
-              }
-            }
-            break
-          case "div":
-            if debugFlag {
-              fmt.Fprintf(os.Stdout, "Start of div, parsingState = %+v\n", parsingState)
-            }
-            for {
-              attrName, attrValue, more := tokenizer.TagAttr();
-              oldParsingState := parsingState
-              if string(attrName) == "class" {
-                attrValueStr := string(attrValue)
-                switch parsingState {
-                  case inGameLookingForPrice:
-                    if attrValueStr == cGameClassPriceAttr {
-                      parsingState = inGameParsingPrice
-                    }
-                    break
-                  case inGameLookingForName:
-                    if attrValueStr == cGameClassNameAttr {
-                      parsingState = inGameParsingName
-                    }
-                    break
-                }
-              }
-
-              if oldParsingState != parsingState || more == false {
-                break
-              }
-            }
-        break
-        }
-      case html.EndTagToken:
-        tn, _ := tokenizer.TagName()
-        tagName := string(tn)
-        if tagName == "a" {
-          if debugFlag {
-            fmt.Fprintf(os.Stdout, "End of parsing game, got: %+v\n", parsedGame)
-          }
-          if (parsedGame.id == 0 && parsedGame.bundleId == 0) || parsedGame.name == "" {
-            fmt.Fprintf(os.Stderr, "Dropping partially parsed game: %+v\n", parsedGame)
-          } else {
-            games = append(games, parsedGame)
-          }
-
-          parsedGame = game{0, 0, "", -1}
-          parsingState = lookingForGame
-        }
-    }
-  }
-}
-
-func selectBestMatchingGame(name string, games []game) *game {
-  if len(games) == 0 {
-    return nil
-  }
-
-  var bestMatchingGame *game = nil
-  for idx, game := range(games) {
-    // If this is a direct match for the name, stop.
-    // This prevent unrelated matches to show up, especially for unreleased games.
-    if strings.ToLower(game.name) == strings.ToLower(name) {
-      // We can't use |game| here as it is temporary variable.
-      bestMatchingGame = &games[idx]
-      break
-    }
-
-    if strings.Contains(game.name, "Soundtrack") || strings.Contains(game.name, "OST") {
-      continue
-    }
-
-    if strings.Contains(game.name, "Artbook") {
-      continue
-    }
-
-    if strings.Contains(game.name, "Adventure Pack") || strings.Contains(game.name, "Season Pass") {
-      continue
-    }
-
-    // Ignore demos.
-    if game.price == 0 {
-      continue
-    }
-
-    // We select the shortest name as it removes all the DLC.
-    if bestMatchingGame != nil && len(game.name) >= len(bestMatchingGame.name) {
-      continue
-    }
-
-    // We can't use |game| here as it is temporary variable.
-    bestMatchingGame = &games[idx]
-  }
-
-  return bestMatchingGame
-}
-
-func fetchAndFillGame(criteria gameCriteria) (error, *game) {
+func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
   if debugFlag {
     fmt.Println("Fetching", criteria.name)
   }
 
-  // Steam uses '+' as delimiters for word in their calls.
-  searchURL := fmt.Sprintf(cSearchURLMissingKeyword, strings.Join(strings.Split(criteria.name, " "), "+"))
-  resp, err := http.Get(searchURL)
-  if err != nil {
-    return err, nil
-  }
-  defer resp.Body.Close()
-
-  err, games := parseSearchResult(criteria.name, resp.Body)
+  err, game := SearchGameOnSteam(criteria.name)
   if err != nil {
     return err, nil
   }
 
-  bestGame := selectBestMatchingGame(criteria.name, games)
-
+  // TODO: Implement fanatical fetching
   if debugFlag {
     fmt.Println("Done Fetching", criteria.name)
   }
-  return nil, bestGame
+  return nil, game
 }
 
 func gameWorker(c chan gameCriteria, output *Output) {
@@ -306,7 +79,7 @@ func gameWorker(c chan gameCriteria, output *Output) {
   }
 }
 
-func splitGameOnCriteria(game game, targetPrice float32, output *Output) {
+func splitGameOnCriteria(game Game, targetPrice float32, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
 
@@ -330,9 +103,6 @@ func splitGameOnCriteria(game game, targetPrice float32, output *Output) {
   output.otherGames = append(output.otherGames, game)
 }
 
-var debugFlag bool
-var gamesFlag string
-var fileFlag string
 var parallelism int = 10
 
 type Output struct {
@@ -349,16 +119,16 @@ type Output struct {
   // TODO: Think about this more. Maybe we can
   // figure out how to use a single output channel
   // (maybe by annotating the game struct?).
-  unreleasedGames []game
-  matchingGames []game
-  otherGames []game
+  unreleasedGames []Game
+  matchingGames []Game
+  otherGames []Game
   m sync.Mutex
 
   wg sync.WaitGroup
 }
 
 // ByPriceThenName implements sort.Interface for []game.
-type ByPriceThenName []game
+type ByPriceThenName []Game
 func (a ByPriceThenName) Len() int { return len(a) }
 func (a ByPriceThenName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a ByPriceThenName) Less(i, j int) bool {
@@ -374,7 +144,7 @@ func (a ByPriceThenName) Less(i, j int) bool {
 }
 
 func newOutput() Output {
-  return Output{[]game{}, []game{}, []game{}, sync.Mutex{}, sync.WaitGroup{}}
+  return Output{[]Game{}, []Game{}, []Game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
 
 func feedGamesFromFile(fileName string, c chan gameCriteria) error {

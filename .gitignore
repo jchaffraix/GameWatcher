@@ -1,2 +1,5 @@
 *.swp
+
+# Binary
 main.exe
+main

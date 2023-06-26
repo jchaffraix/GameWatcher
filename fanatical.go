@@ -5,6 +5,7 @@ import (
   "io"
   "fmt"
   "net/http"
+  "os"
   "strings"
 )
 
@@ -60,19 +61,18 @@ func FillFanaticalInfo(game *Game) error {
   // Ignore unreleased games.
   if game.steam.id == 0 && game.steam.bundleId == 0 {
     if debugFlag {
-      fmt.Println("Ignoring unreleased game (Fanatical)")
+      fmt.Printf("Ignoring unreleased game \"%s\" (Fanatical)\n", game.name)
     }
     return nil
   }
 
   searchURL := fmt.Sprintf(cFanaticalSearchURLMissingKey, fanaticalKey)
   if debugFlag {
-    fmt.Printf("Fanatical search URL: %s\n", searchURL)
+    fmt.Printf("Fanatical search URL: \"%s\"\n", searchURL)
   }
 
   // We send a JSON payload as application/x-www-form-urlencoded to the search endpoint.
   buf := fmt.Sprintf("{\"query\":\"%s\",\"hitsPerPage\":5,\"filters\":\"\"}", game.name)
-  fmt.Printf("Buff : %s", buf)
   reader := strings.NewReader(buf)
   resp, err := http.Post(searchURL, "application/x-www-form-urlencoded", reader)
   if err != nil {
@@ -87,19 +87,26 @@ func FillFanaticalInfo(game *Game) error {
   var parsedResp fanaticalSearchResponse
   json.Unmarshal(body, &parsedResp)
   if debugFlag {
-    fmt.Printf("Got Fanatical response: %+v\n", parsedResp)
+    fmt.Printf("Got (parsed) Fanatical response: %+v\n", parsedResp)
   }
 
   if len(parsedResp.Hits) == 0 {
     if debugFlag {
-      fmt.Printf("Not match in Fanatical for %s\n", game.name)
+      fmt.Printf("No Fanatical match for %s\n", game.name)
     }
     return nil
   }
 
+  hit := parsedResp.Hits[0]
+  if hit.Name != game.name {
+    if debugFlag {
+      fmt.Fprintf(os.Stderr, "Fanatical returned wrong game for \"%s\" (hit=%+v)\n", game.name, hit)
+    }
+    return nil
+  }
   // We take the first one as it's the most relevant.
   // TODO: Should I filter this like steam?
-  game.fanatical.price = parsedResp.Hits[0].Price.USD
-  game.fanatical.slug = parsedResp.Hits[0].Slug
+  game.fanatical.price = hit.Price.USD
+  game.fanatical.slug = hit.Slug
   return nil
 }

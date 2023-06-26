@@ -115,7 +115,8 @@ func gameWorker(c chan gameCriteria, output *Output) {
     }
 
     // Fill min price.
-    if game.steam.price <= game.fanatical.price {
+    // We default to steam if there is no price for Fanatical.
+    if game.fanatical.price < 0 || game.steam.price <= game.fanatical.price {
       game.minPrice = game.steam.price
       game.backend = "steam"
     } else {

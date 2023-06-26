@@ -22,10 +22,36 @@ type SteamInfo struct {
   price float32
 }
 
+type FanaticalInfo struct {
+  // Game price may be -1 if none was found (unreleased games).
+  price float32
+
+  // Slug is what is used to build the fanatical URL.
+  // Empty if the game is unreleased or inexistent.
+  slug string
+}
+
 type Game struct {
   name string
 
+  minPrice float32
+  backend string
+
+  // Backend-specific info.
   steam SteamInfo
+  fanatical FanaticalInfo
+}
+
+func (g Game) url() string {
+  if g.backend == "steam" {
+    return g.steamURL()
+  } else {
+    if g.backend != "fanatical" {
+      panic(fmt.Sprintf("Unknown backend \"%s\"", g.backend))
+    }
+
+    return g.fanaticalURL()
+  }
 }
 
 func (g Game) steamURL() string {
@@ -38,6 +64,14 @@ func (g Game) steamURL() string {
   }
 
   return fmt.Sprintf("https://store.steampowered.com/app/%d", g.steam.id)
+}
+
+func (g Game) fanaticalURL() string {
+  if g.fanatical.slug == "" {
+    panic(fmt.Sprintf("Game doesn't have a fanatical slug: %+v", g))
+  }
+
+  return fmt.Sprintf("https://www.fanatical.com/en/game/%s", g.fanatical.slug)
 }
 
 type gameCriteria struct {
@@ -55,7 +89,10 @@ func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
     return err, nil
   }
 
-  // TODO: Implement fanatical fetching
+  err = FillFanaticalInfo(game)
+  if err != nil {
+    return err, nil
+  }
 
   if debugFlag {
     fmt.Println("Done Fetching", criteria.name)
@@ -77,6 +114,15 @@ func gameWorker(c chan gameCriteria, output *Output) {
       continue
     }
 
+    // Fill min price.
+    if game.steam.price <= game.fanatical.price {
+      game.minPrice = game.steam.price
+      game.backend = "steam"
+    } else {
+      game.minPrice = game.fanatical.price
+      game.backend = "fanatical"
+    }
+
     splitGameOnCriteria(*game, criteria.targetPrice, output)
 
     if debugFlag {
@@ -95,16 +141,16 @@ func splitGameOnCriteria(game Game, targetPrice float32, output *Output) {
   }
 
   // Simple price point right now.
-  if game.steam.price < targetPrice {
+  if game.minPrice < targetPrice {
     if debugFlag {
-      fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v matched targetPrice = %v\n", game.name, game.steam.price, targetPrice)
+      fmt.Fprintf(os.Stdout, "Game \"%s\" with price = %v (backend = \"%s\") matched targetPrice = %v\n", game.name, game.minPrice, game.backend, targetPrice)
     }
     output.matchingGames = append(output.matchingGames, game)
     return
   }
 
   if debugFlag {
-    fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v was over targetPrice = %v\n", game.name, game.steam.price, targetPrice)
+    fmt.Fprintf(os.Stdout, "Game \"%s\" with price = %v (backend = \"%s\") was over targetPrice = %v\n", game.name, game.minPrice, game.backend, targetPrice)
   }
   output.otherGames = append(output.otherGames, game)
 }
@@ -138,8 +184,8 @@ type ByPriceThenName []Game
 func (a ByPriceThenName) Len() int { return len(a) }
 func (a ByPriceThenName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a ByPriceThenName) Less(i, j int) bool {
-  iPrice := a[i].steam.price
-  jPrice := a[j].steam.price
+  iPrice := a[i].minPrice
+  jPrice := a[j].minPrice
   if (iPrice < jPrice) {
     return true;
   }
@@ -241,6 +287,8 @@ func main() {
     return
   }
 
+  InitFanatical()
+
   c := make(chan gameCriteria, parallelism)
   output := newOutput()
   output.wg.Add(parallelism)
@@ -288,7 +336,7 @@ func main() {
     fmt.Fprintf(os.Stdout, "============== Games under target ================\n")
     fmt.Fprintf(os.Stdout, "==================================================\n")
     for _, game := range output.matchingGames {
-      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.steam.price, game.steamURL())
+      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.minPrice, game.url())
     }
     fmt.Fprintf(os.Stdout, "\n\n")
   }
@@ -297,7 +345,7 @@ func main() {
   fmt.Fprintf(os.Stdout, "=============== Games over target ================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")
   for _, game := range output.otherGames {
-    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.steam.price, game.steamURL())
+    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.minPrice, game.url())
   }
   fmt.Fprintf(os.Stdout, "==================================================\n")
 }

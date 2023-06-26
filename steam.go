@@ -47,7 +47,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
   parsingState := lookingForGame
 
   games := []Game{};
-  parsedGame := Game{"", SteamInfo{0, 0, -1}};
+  parsedGame := Game{"", -1, "", SteamInfo{0, 0, -1}, FanaticalInfo{-1, ""}};
 
   tokenizer := html.NewTokenizer(reader)
   for {
@@ -177,7 +177,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
             games = append(games, parsedGame)
           }
 
-          parsedGame = Game{"", SteamInfo{0, 0, -1}};
+          parsedGame = Game{"", -1, "", SteamInfo{0, 0, -1}, FanaticalInfo{-1, ""}};
           parsingState = lookingForGame
         }
     }

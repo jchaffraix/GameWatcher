@@ -12,27 +12,32 @@ import (
   "sync"
 )
 
-// TODO: This needs to go to its own file no?
-type Game struct {
+// TODO: All those common structs need to go to a shared file.
+type SteamInfo struct {
   // Either id (regular game) or bundleId (for bundles) will be ever set.
   id int
   bundleId int
-  name string
 
   // Game price may be -1 if none was found (unreleased games).
   price float32
 }
 
+type Game struct {
+  name string
+
+  steam SteamInfo
+}
+
 func (g Game) steamURL() string {
-  if g.bundleId != 0 && g.id != 0 {
+  if g.steam.bundleId != 0 && g.steam.id != 0 {
     panic(fmt.Sprintf("Game is both a regular game and a bundle: %+v", g))
   }
 
-  if g.bundleId != 0 {
-    return fmt.Sprintf("https://store.steampowered.com/bundle/%d", g.bundleId)
+  if g.steam.bundleId != 0 {
+    return fmt.Sprintf("https://store.steampowered.com/bundle/%d", g.steam.bundleId)
   }
 
-  return fmt.Sprintf("https://store.steampowered.com/app/%d", g.id)
+  return fmt.Sprintf("https://store.steampowered.com/app/%d", g.steam.id)
 }
 
 type gameCriteria struct {
@@ -51,6 +56,7 @@ func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
   }
 
   // TODO: Implement fanatical fetching
+
   if debugFlag {
     fmt.Println("Done Fetching", criteria.name)
   }
@@ -83,22 +89,22 @@ func splitGameOnCriteria(game Game, targetPrice float32, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
 
-  if game.price == -1 {
+  if game.steam.price == -1 {
     output.unreleasedGames = append(output.unreleasedGames, game)
     return
   }
 
   // Simple price point right now.
-  if game.price < targetPrice {
+  if game.steam.price < targetPrice {
     if debugFlag {
-      fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v matched targetPrice = %v\n", game.name, game.price, targetPrice)
+      fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v matched targetPrice = %v\n", game.name, game.steam.price, targetPrice)
     }
     output.matchingGames = append(output.matchingGames, game)
     return
   }
 
   if debugFlag {
-    fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v was over targetPrice = %v\n", game.name, game.price, targetPrice)
+    fmt.Fprintf(os.Stdout, "Game \"%s\", price = %v was over targetPrice = %v\n", game.name, game.steam.price, targetPrice)
   }
   output.otherGames = append(output.otherGames, game)
 }
@@ -132,11 +138,13 @@ type ByPriceThenName []Game
 func (a ByPriceThenName) Len() int { return len(a) }
 func (a ByPriceThenName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a ByPriceThenName) Less(i, j int) bool {
-  if (a[i].price < a[j].price) {
+  iPrice := a[i].steam.price
+  jPrice := a[j].steam.price
+  if (iPrice < jPrice) {
     return true;
   }
 
-  if (a[i].price > a[j].price) {
+  if (iPrice > jPrice) {
     return false;
   }
 
@@ -280,7 +288,7 @@ func main() {
     fmt.Fprintf(os.Stdout, "============== Games under target ================\n")
     fmt.Fprintf(os.Stdout, "==================================================\n")
     for _, game := range output.matchingGames {
-      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.price, game.steamURL())
+      fmt.Fprintf(os.Stdout, "%s: $%.2f - %s \n", game.name, game.steam.price, game.steamURL())
     }
     fmt.Fprintf(os.Stdout, "\n\n")
   }
@@ -289,7 +297,7 @@ func main() {
   fmt.Fprintf(os.Stdout, "=============== Games over target ================\n")
   fmt.Fprintf(os.Stdout, "==================================================\n")
   for _, game := range output.otherGames {
-    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.price, game.steamURL())
+    fmt.Fprintf(os.Stdout, "%s: $%.2f - %s\n", game.name, game.steam.price, game.steamURL())
   }
   fmt.Fprintf(os.Stdout, "==================================================\n")
 }

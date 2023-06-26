@@ -47,7 +47,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
   parsingState := lookingForGame
 
   games := []Game{};
-  parsedGame := Game{0, 0, "", -1};
+  parsedGame := Game{"", SteamInfo{0, 0, -1}};
 
   tokenizer := html.NewTokenizer(reader)
   for {
@@ -71,7 +71,7 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
           case inGameParsingPrice:
             priceStr := string(tokenizer.Text())
             if strings.Contains(priceStr, "Free") {
-              parsedGame.price = 0
+              parsedGame.steam.price = 0
             } else {
               // We drop the first letter as it is the currency.
               priceStr := priceStr[1:]
@@ -79,21 +79,21 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
               if err != nil {
                 fmt.Fprintf(os.Stderr, "Couldn't convert text to price (" + priceStr + ")\n")
               } else {
-                parsedGame.price = float32(price)
+                parsedGame.steam.price = float32(price)
               }
             }
 
             parsingState = lookingForEndOfCurrentGame
             break
           case inGameParsingName:
-            if parsedGame.bundleId != 0 {
+            if parsedGame.steam.bundleId != 0 {
               panic("Parsing bundle as regular game!")
             }
             parsedGame.name = string(tokenizer.Text())
             parsingState = inGameLookingForPrice
             break
           case inGameParsingBundleName:
-            if parsedGame.id != 0 {
+            if parsedGame.steam.id != 0 {
               panic("Parsing regular game as bundle!")
             }
             parsedGame.name = string(tokenizer.Text())
@@ -121,10 +121,10 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
                   return errors.New("Couldn't convert attribute to id (" + idStr + ")"), games
                 }
                 if string(attrName) == cGameIdAttr {
-                  parsedGame.id = parsedId
+                  parsedGame.steam.id = parsedId
                   parsingState = inGameParsingName
                 } else {
-                  parsedGame.bundleId = parsedId
+                  parsedGame.steam.bundleId = parsedId
                   parsingState = inGameParsingBundleName
                 }
 
@@ -171,13 +171,13 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
           if debugFlag {
             fmt.Fprintf(os.Stdout, "End of parsing game, got: %+v\n", parsedGame)
           }
-          if (parsedGame.id == 0 && parsedGame.bundleId == 0) || parsedGame.name == "" {
+          if (parsedGame.steam.id == 0 && parsedGame.steam.bundleId == 0) || parsedGame.name == "" {
             fmt.Fprintf(os.Stderr, "Dropping partially parsed game: %+v\n", parsedGame)
           } else {
             games = append(games, parsedGame)
           }
 
-          parsedGame = Game{0, 0, "", -1}
+          parsedGame = Game{"", SteamInfo{0, 0, -1}};
           parsingState = lookingForGame
         }
     }
@@ -212,7 +212,7 @@ func selectBestMatchingGame(name string, games []Game) *Game {
     }
 
     // Ignore demos.
-    if game.price == 0 {
+    if game.steam.price == 0 {
       continue
     }
 

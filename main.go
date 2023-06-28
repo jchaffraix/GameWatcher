@@ -31,6 +31,14 @@ type FanaticalInfo struct {
   slug string
 }
 
+type GreenManGamingInfo struct {
+  // Game price may be -1 if none was found (unreleased games).
+  price float32
+
+  // Path to the game.
+  path string
+}
+
 type Game struct {
   // The name of the game in Steam.
   // This is used by the Fanatical backend to associate result (there is no ID we can use).
@@ -42,17 +50,20 @@ type Game struct {
   // Backend-specific info.
   steam SteamInfo
   fanatical FanaticalInfo
+  gmg GreenManGamingInfo
 }
 
 func (g Game) url() string {
   if g.backend == "steam" {
     return g.steamURL()
+  } else if g.backend == "fanatical" {
+    return g.fanaticalURL()
   } else {
-    if g.backend != "fanatical" {
+    if g.backend != "gmg" {
       panic(fmt.Sprintf("Unknown backend \"%s\"", g.backend))
     }
 
-    return g.fanaticalURL()
+    return g.greenManGamingURL()
   }
 }
 
@@ -76,6 +87,14 @@ func (g Game) fanaticalURL() string {
   return fmt.Sprintf("https://www.fanatical.com/en/game/%s", g.fanatical.slug)
 }
 
+func (g Game) greenManGamingURL() string {
+  if g.gmg.path == "" {
+    panic(fmt.Sprintf("Game doesn't have a GreenManGaming path: %+v", g))
+  }
+
+  return fmt.Sprintf("https://www.greenmangaming.com/%s", g.gmg.path)
+}
+
 type gameCriteria struct {
   name string
   targetPrice float32
@@ -92,6 +111,11 @@ func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
   }
 
   err = FillFanaticalInfo(game)
+  if err != nil {
+    return err, nil
+  }
+
+  err = FillGreenManGamingInfo(game)
   if err != nil {
     return err, nil
   }
@@ -116,22 +140,29 @@ func gameWorker(c chan gameCriteria, output *Output) {
       continue
     }
 
-    // Fill min price.
-    // We default to steam if there is no price for Fanatical.
-    if game.fanatical.price < 0 || game.steam.price <= game.fanatical.price {
-      game.minPrice = game.steam.price
-      game.backend = "steam"
-    } else {
-      game.minPrice = game.fanatical.price
-      game.backend = "fanatical"
-    }
-
+    fillMinPrice(game)
     splitGameOnCriteria(*game, criteria.targetPrice, output)
 
     if debugFlag {
-      fmt.Println("Done for", criteria.name)
+      fmt.Printf("Done for \"%s\", final game: %+v\n", criteria.name, game)
     }
   }
+}
+
+func fillMinPrice(game *Game) {
+  // Preference is steam, fanatical, GreenManGaming (gmg).
+  game.minPrice = game.steam.price
+  game.backend = "steam"
+
+  if game.gmg.price > 0 && game.gmg.price < game.steam.price {
+    game.minPrice = game.gmg.price
+    game.backend = "gmg"
+  }
+
+  if game.fanatical.price > 0 && game.fanatical.price < game.steam.price {
+    game.minPrice = game.fanatical.price
+    game.backend = "fanatical"
+  } 
 }
 
 func splitGameOnCriteria(game Game, targetPrice float32, output *Output) {

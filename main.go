@@ -23,7 +23,7 @@ type SteamInfo struct {
 }
 
 type FanaticalInfo struct {
-  // Game price may be -1 if none was found (unreleased games).
+  // Game price may be -1 if the game is not listed.
   price float32
 
   // Slug is what is used to build the fanatical URL.
@@ -32,7 +32,7 @@ type FanaticalInfo struct {
 }
 
 type GreenManGamingInfo struct {
-  // Game price may be -1 if none was found (unreleased games).
+  // Game price may be -1 if the game is not listed.
   price float32
 
   // Path to the game.
@@ -40,7 +40,7 @@ type GreenManGamingInfo struct {
 }
 
 type HumbleBundleInfo struct {
-  // Game price may be -1 if none was found (unreleased games).
+  // Game price may be -1 if the game is not listed.
   price float32
 
   // Path to the game.
@@ -127,6 +127,13 @@ func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
   err, game := SearchGameOnSteam(criteria.name)
   if err != nil {
     return err, nil
+  }
+
+  if game.steam.price == -1 {
+    if debugFlag {
+      fmt.Printf("Ignoring unreleased game \"%s\" (from non-steam backend)\n", game.name)
+    }
+    return nil, game
   }
 
   err = FillFanaticalInfo(game)

@@ -58,14 +58,6 @@ type fanaticalSearchResponse struct {
 }
 
 func FillFanaticalInfo(game *Game) error {
-  // Ignore unreleased games.
-  if game.steam.id == 0 && game.steam.bundleId == 0 {
-    if debugFlag {
-      fmt.Printf("Ignoring unreleased game \"%s\" (Fanatical)\n", game.name)
-    }
-    return nil
-  }
-
   searchURL := fmt.Sprintf(cFanaticalSearchURLMissingKey, fanaticalKey)
   if debugFlag {
     fmt.Printf("Fanatical search URL: \"%s\"\n", searchURL)

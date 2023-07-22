@@ -102,7 +102,7 @@ func (g Game) greenManGamingURL() string {
     panic(fmt.Sprintf("Game doesn't have a GreenManGaming path: %+v", g))
   }
 
-  return fmt.Sprintf("https://www.greenmangaming.com/%s", g.gmg.path)
+  return fmt.Sprintf("https://www.greenmangaming.com%s", g.gmg.path)
 }
 
 func (g Game) humbleBundleURL() string {

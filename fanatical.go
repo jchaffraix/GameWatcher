@@ -46,6 +46,10 @@ func InitFanatical() error {
 
   // Note: We ignore the ValidUntil field as we should process all entries within the lifetime of the key.
   fanaticalKey = parsedResp.Key
+  if fanaticalKey == "" {
+    panic("Invalid search key for Fanatical")
+  }
+
   return nil
 }
 

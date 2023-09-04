@@ -12,6 +12,7 @@ import (
 const (
   cFanaticalKeyURL string = "https://www.fanatical.com/api/algolia/key"
   cFanaticalSearchURLMissingKey string = "https://w2m9492ddv-dsn.algolia.net/1/indexes/fan_alt_rank/query?x-algolia-api-key=%s&x-algolia-application-id=W2M9492DDV"
+  cFanaticalAnonId string = "deadbeef-8888-8888-8888-deadbeef88"
 )
 
 type fanaticalKeyResponse struct {
@@ -22,7 +23,13 @@ type fanaticalKeyResponse struct {
 var fanaticalKey string = ""
 
 func InitFanatical() error {
-  resp, err := http.Get(cFanaticalKeyURL)
+  req, err := http.NewRequest("GET", cFanaticalKeyURL, nil)
+  if err != nil {
+    return err
+  }
+  req.Header.Add("anonid", cFanaticalAnonId)
+  client := &http.Client{}
+  resp, err := client.Do(req)
   if err != nil {
     return err
   }

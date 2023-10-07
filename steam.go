@@ -185,10 +185,6 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
 }
 
 func selectBestMatchingGame(name string, games []Game) *Game {
-  if len(games) == 0 {
-    return nil
-  }
-
   var bestMatchingGame *Game = nil
   for idx, game := range(games) {
     // If this is a direct match for the name, stop.
@@ -241,6 +237,10 @@ func SearchGameOnSteam(name string) (error, *Game) {
   err, games := parseSearchResult(name, resp.Body)
   if err != nil {
     return err, nil
+  }
+
+  if len(games) == 0 {
+    panic(fmt.Sprintf("Couldn't find a matching game for %s", name))
   }
 
   return nil, selectBestMatchingGame(name, games)

@@ -100,15 +100,16 @@ func FillFanaticalInfo(game *Game) error {
     return nil
   }
 
+  // We take the first result as it's the most relevant.
+  // TODO: Should I filter this like we do for steam?
   hit := parsedResp.Hits[0]
-  if hit.Name != game.name {
+  // If fanatical doesn't find a game, it will still include some games whose name is close to the query.
+  if !strings.EqualFold(hit.Name, game.name) {
     if debugFlag {
-      fmt.Fprintf(os.Stderr, "Fanatical returned wrong game for \"%s\" (hit=%+v)\n", game.name, hit)
+      fmt.Fprintf(os.Stderr, "Fanatical returned the wrong game for \"%s\" (hit=%+v)\n", game.name, hit)
     }
     return nil
   }
-  // We take the first one as it's the most relevant.
-  // TODO: Should I filter this like steam?
   game.fanatical.price = hit.Price.USD
   game.fanatical.slug = hit.Slug
   return nil

@@ -88,7 +88,7 @@ func FillHumbleBundleInfo(game *Game) error {
   }
 
   for _, hit := range(parsedResp.Hits) {
-    if hit.Name == game.name {
+    if strings.EqualFold(hit.Name, game.name) {
       if !hasSteamDelivery(hit) {
         if debugFlag {
           fmt.Printf("Ignoring hit for \"%s\" with a steam delivery, full hit: %+v\n", game.name, hit)

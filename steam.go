@@ -240,7 +240,7 @@ func SearchGameOnSteam(name string) (error, *Game) {
   }
 
   if len(games) == 0 {
-    panic(fmt.Sprintf("Couldn't find a matching game for %s", name))
+    panic(fmt.Sprintf("Couldn't find a matching game for %s (did you mistype the name?)", name))
   }
 
   return nil, selectBestMatchingGame(name, games)

@@ -280,7 +280,8 @@ func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
     // Ensure that we close c to avoid deadlocks in case of errors.
   defer file.Close()
 
-  games := make([]gameCriteria, 0)
+  uniqueGameNames := make(map[string] bool)
+  criteria := make([]gameCriteria, 0)
   csvReader := csv.NewReader(file)
   for {
     records, err := csvReader.Read()
@@ -298,6 +299,14 @@ func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
       panic("Invalid CSV file, no record on line")
     }
     gameName := records[0]
+
+    // Check if the name is unique.
+    _, exists := uniqueGameNames[gameName]
+    if exists {
+      panic(fmt.Sprintf("Duplicated name \"%s\"", gameName))
+    }
+    uniqueGameNames[gameName] = true
+
     // Start with our default and override it if specified.
     targetPrice := cDefaultTargetPrice
     if len(records) == 2 {
@@ -307,9 +316,9 @@ func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
       }
       targetPrice = float32(tmp)
     }
-    games = append(games, gameCriteria{gameName, targetPrice})
+    criteria = append(criteria, gameCriteria{gameName, targetPrice})
   }
-  return games, nil
+  return criteria, nil
 }
 
 func feedGamesFromFile(fileName string, c chan gameCriteria) error {

@@ -271,78 +271,78 @@ func newOutput() Output {
   return Output{[]Game{}, []Game{}, []Game{}, sync.Mutex{}, sync.WaitGroup{}}
 }
 
-func feedGamesFromFile(fileName string, c chan gameCriteria) error {
+func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
   file, err := os.Open(fileName)
+  if err != nil {
+    return []gameCriteria{}, err
+  }
+
+    // Ensure that we close c to avoid deadlocks in case of errors.
+  defer file.Close()
+
+  games := make([]gameCriteria, 0)
+  csvReader := csv.NewReader(file)
+  for {
+    records, err := csvReader.Read()
+    // Handle EOF as a special error.
+    if err == io.EOF {
+      break
+    }
+
+    // We want to allow an optional targetPrice.
+    // This means that we ignore ErrFieldCount errors by looking at the presence of `records`.
+    if err != nil && records == nil {
+      return []gameCriteria{}, err
+    }
+    if len(records) == 0 {
+      panic("Invalid CSV file, no record on line")
+    }
+    gameName := records[0]
+    // Start with our default and override it if specified.
+    targetPrice := cDefaultTargetPrice
+    if len(records) == 2 {
+      tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), /*bitSize=*/32)
+      if err != nil {
+        return []gameCriteria{}, err
+      }
+      targetPrice = float32(tmp)
+    }
+    games = append(games, gameCriteria{gameName, targetPrice})
+  }
+  return games, nil
+}
+
+func feedGamesFromFile(fileName string, c chan gameCriteria) error {
+  gameCriteria, err := readGamesFromFiles(fileName)
   if err != nil {
     return err
   }
 
-  go func() {
-    // Ensure that we close c to avoid deadlocks in case of errors.
-    defer close(c)
-    defer file.Close()
-
-    csvReader := csv.NewReader(file)
-    for {
-      records, err := csvReader.Read()
-      // Handle EOF as a special error.
-      if err == io.EOF {
-        return
-      }
-
-      // We want to allow an optional targetPrice.
-      // This means that we ignore ErrFieldCount errors by looking at the presence of `records`.
-      if err != nil && records == nil {
-        fmt.Fprintf(os.Stderr, "Error reading file = %s (err=%s)\n", fileName, err)
-        return
-      }
-      if len(records) == 0 {
-        panic("Invalid CSV file, no record on line")
-      }
-      gameName := records[0]
-      // Start with our default and override it if specified.
-      targetPrice := cDefaultTargetPrice
-      if len(records) == 2 {
-        tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), /*bitSize=*/32)
-        if err != nil {
-          fmt.Fprintf(os.Stderr, "Error reading file = %s, invalid price (err=%+v)\n", fileName, err)
-          return
-        }
-        targetPrice = float32(tmp)
-      }
-      c <- gameCriteria{gameName, targetPrice}
-    }
-  }()
+  for _, gameCriterium := range gameCriteria {
+    c <- gameCriterium
+  }
 
   return nil
 }
 
-func feedGamesFromFlag(games string, c chan gameCriteria) error {
-
-  go func() {
-    // Ensure that we close c to avoid deadlocks in case of errors.
-    defer close(c)
-
-    tokens := strings.Split(games, ",")
-    idx := 0
-    for ; idx < len(tokens); idx++ {
-      gameName := tokens[idx];
-      // Start with our default and override it if specified.
-      targetPrice := cDefaultTargetPrice
-      if idx < len(tokens) - 1 {
-        lookAheadToken := tokens[idx + 1]
-        tmp, err := strconv.ParseFloat(lookAheadToken, /*bitSize=*/32)
-        if err == nil {
-          targetPrice = float32(tmp)
-          // Skip next token as it was an optional price.
-          idx += 1
-        }
+func feedGamesFromFlag(games string, c chan gameCriteria) {
+  tokens := strings.Split(games, ",")
+  idx := 0
+  for ; idx < len(tokens); idx++ {
+    gameName := tokens[idx];
+    // Start with our default and override it if specified.
+    targetPrice := cDefaultTargetPrice
+    if idx < len(tokens) - 1 {
+      lookAheadToken := tokens[idx + 1]
+      tmp, err := strconv.ParseFloat(lookAheadToken, /*bitSize=*/32)
+      if err == nil {
+        targetPrice = float32(tmp)
+        // Skip next token as it was an optional price.
+        idx += 1
       }
-      c <- gameCriteria{gameName, targetPrice}
     }
-  }()
-
-  return nil
+    c <- gameCriteria{gameName, targetPrice}
+  }
 }
 
 func main() {
@@ -372,17 +372,15 @@ func main() {
   if (fileFlag != "") {
     err := feedGamesFromFile(fileFlag, c)
     if err != nil {
-      fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", args[0], err)
+      fmt.Fprintf(os.Stderr, "Error processing file=%s (err = %+v)", args[0], err)
       return
     }
   } else {
-    err := feedGamesFromFlag(gamesFlag, c)
-    if err != nil {
-      fmt.Fprintf(os.Stderr, "Couldn't open file for reading %s (err = %+v)", args[0], err)
-      return
-    }
+    feedGamesFromFlag(gamesFlag, c)
   }
 
+  // Make sure the channel is closed.
+  close(c)
   output.wg.Wait()
 
   // Sort the output by price, then name.

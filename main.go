@@ -2,6 +2,7 @@ package main
 
 import (
   "encoding/csv"
+  "errors"
   "fmt"
   "flag"
   "io"
@@ -272,6 +273,16 @@ func newOutput() Output {
 }
 
 func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
+  // Check that the file exist and is valid.
+  // For some reason, os.Open doesn't return an error when opening a directory.
+  stats, err := os.Stat(fileName)
+  if err != nil {
+    return []gameCriteria{}, err
+  }
+  if stats.IsDir() {
+    return []gameCriteria{}, errors.New("File is a directory")
+  }
+
   file, err := os.Open(fileName)
   if err != nil {
     return []gameCriteria{}, err
@@ -360,7 +371,6 @@ func main() {
   flag.StringVar(&fileFlag, "file", "", "File containing a CSV list of games")
   flag.Parse()
 
-  args := flag.Args()
   if gamesFlag == "" && fileFlag == "" || (gamesFlag != "" && fileFlag != "") {
     fmt.Printf("Usage: main [-debug] [-file <file>] [-games game1,7,game2,game3]\n\n\nEither -file or -games must be set, but not both.\n\n<file> contains one game name per line along with a potential target price divided by ','\nExample: Foobar, 10\n")
     return
@@ -381,7 +391,7 @@ func main() {
   if (fileFlag != "") {
     err := feedGamesFromFile(fileFlag, c)
     if err != nil {
-      fmt.Fprintf(os.Stderr, "Error processing file=%s (err = %+v)", args[0], err)
+      fmt.Fprintf(os.Stderr, "Error processing file=%s (err = %+v)\n", fileFlag, err)
       return
     }
   } else {

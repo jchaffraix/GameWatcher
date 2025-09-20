@@ -48,6 +48,13 @@ type HumbleBundleInfo struct {
   path string
 }
 
+type LoadedInfo struct {
+  price float32
+
+  // Full URL to game.
+  url string
+}
+
 type Game struct {
   // The name of the game in Steam.
   // This is used by the Fanatical backend to associate result (there is no ID we can use).
@@ -61,6 +68,7 @@ type Game struct {
   fanatical FanaticalInfo
   gmg GreenManGamingInfo
   hb HumbleBundleInfo
+  loaded LoadedInfo
 }
 
 func (g Game) url() string {
@@ -70,6 +78,8 @@ func (g Game) url() string {
     return g.fanaticalURL()
   } else if g.backend == "gmg" {
     return g.greenManGamingURL()
+  } else if g.backend == "loaded" {
+    return g.loaded.url
   } else {
     if g.backend != "humblebundle" {
       panic(fmt.Sprintf("Unknown backend \"%s\"", g.backend))
@@ -152,6 +162,11 @@ func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
     return err, nil
   }
 
+  err = FillLoadedInfo(game)
+  if err != nil {
+    return err, nil
+  }
+
   if debugFlag {
     fmt.Println("Done Fetching", criteria.name)
   }
@@ -182,7 +197,7 @@ func gameWorker(c chan gameCriteria, output *Output) {
 }
 
 func fillMinPrice(game *Game) {
-  // Preference is steam, fanatical, HumbleBundle (hb), GreenManGaming (gmg).
+  // Preference is steam, fanatical, HumbleBundle (hb), GreenManGaming (gmg), loaded.
   game.minPrice = game.steam.price
   game.backend = "steam"
 
@@ -199,6 +214,11 @@ func fillMinPrice(game *Game) {
   if game.gmg.price > 0 && game.gmg.price < game.minPrice {
     game.minPrice = game.gmg.price
     game.backend = "gmg"
+  }
+
+  if game.loaded.price > 0 && game.loaded.price < game.minPrice {
+    game.minPrice = game.loaded.price
+    game.backend = "loaded"
   }
 }
 

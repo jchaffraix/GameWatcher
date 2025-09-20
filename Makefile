@@ -3,7 +3,7 @@
 all: build
 
 build:
-	go build -o watcher fanatical.go greenmangaming.go humblebundle.go steam.go flags.go main.go
+	go build -o watcher fanatical.go greenmangaming.go humblebundle.go loaded.go steam.go flags.go main.go
 
 # TODO: If flag is defined, none of the argument building applies.
 flag=

@@ -33,11 +33,18 @@ type loadedGameName struct {
   Default string
 }
 
+type inStockInfo struct {
+  Default bool
+}
+
 type loadedGame struct {
   Name loadedGameName
   Url loadedGameUrl
   Price loadedGamePrice
   Platforms loadedGamePlatforms
+  // in_stock is either 1 or {"default": false}.
+  // Unmarshal will skip the field if it's not appropriate.
+  InStock int `json:"in_stock"`
 }
 
 type loadedResults struct {
@@ -62,6 +69,9 @@ func FillLoadedInfo(game *Game) error {
   if err != nil {
     return err
   }
+  if debugFlag {
+    fmt.Printf("[Loaded] Got full response: %+v\n", string(body))
+  }
   var parsedResp loadedSearchResponse
   json.Unmarshal(body, &parsedResp)
   if debugFlag {
@@ -81,6 +91,12 @@ func FillLoadedInfo(game *Game) error {
     if hit.Platforms.Default != "Steam" {
       if debugFlag {
         fmt.Printf("[Loaded] Ignoring non-steam game: %+v\n", hit)
+      }
+      continue
+    }
+    if hit.InStock != 1 {
+      if debugFlag {
+        fmt.Printf("[Loaded] Ignoring game not-in-stock: %+v\n", hit)
       }
       continue
     }

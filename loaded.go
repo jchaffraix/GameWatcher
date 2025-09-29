@@ -5,7 +5,6 @@ import (
   "io"
   "fmt"
   "net/http"
-  "os"
   "strings"
 )
 
@@ -66,27 +65,46 @@ func FillLoadedInfo(game *Game) error {
   var parsedResp loadedSearchResponse
   json.Unmarshal(body, &parsedResp)
   if debugFlag {
-    fmt.Printf("Got (parsed) Loaded response: %+v\n", parsedResp)
+    fmt.Printf("[Loaded] Got (parsed) response: %+v\n", parsedResp)
   }
 
   if len(parsedResp.Results) == 0 || len(parsedResp.Results[0].Hits) == 0 {
     if debugFlag {
-      fmt.Printf("No Loaded match for %s\n", game.name)
+      fmt.Printf("[Loaded] No match for %s\n", game.name)
     }
     return nil
   }
 
-  // We take the first result as it's the most relevant.
-  // TODO: Should I filter this like we do for steam?
-  hit := parsedResp.Results[0].Hits[0]
-  // Loaded tends to append "PC" to the name so look for a prefix match.
-  if !strings.HasPrefix(strings.ToLower(hit.Name.Default), strings.ToLower(game.name)) {
-    if debugFlag {
-      fmt.Fprintf(os.Stderr, "Loaded returned the wrong game for \"%s\" (hit=%+v)\n", game.name, hit)
+  // Collect the names.
+  results := []string{}
+  for _, hit := range(parsedResp.Results[0].Hits) {
+    if hit.Platforms.Default != "Steam" {
+      if debugFlag {
+        fmt.Printf("[Loaded] Ignoring non-steam game: %+v\n", hit)
+      }
+      continue
     }
-    return nil
+    results = append(results, hit.Name.Default)
   }
-  game.loaded.price = hit.Price.USD.Default
-  game.loaded.url = hit.Url.Default
+  bestResult := BestMatch(game.name, results) 
+  if bestResult == "" {
+      if debugFlag {
+        fmt.Printf("[Loaded] No matching game for %s\n", game.name)
+      }
+      return nil
+  }
+
+  bestHit := &parsedResp.Results[0].Hits[0]
+  for _, hit := range(parsedResp.Results[0].Hits) {
+    if hit.Name.Default == bestResult {
+      bestHit = &hit
+    }
+  }
+  if debugFlag {
+    fmt.Printf("[Loaded] Best hit: %+v\n", bestHit)
+  }
+
+  game.loaded.price = bestHit.Price.USD.Default
+  game.loaded.url = bestHit.Url.Default
   return nil
 }

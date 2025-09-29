@@ -183,7 +183,7 @@ func gameWorker(c chan gameCriteria, output *Output) {
     }
 
     if game == nil {
-      fmt.Fprintf(os.Stderr, "No matches for \"%s\" (err = %+v)\n", criteria.name)
+      fmt.Fprintf(os.Stderr, "No matches for \"%s\"\n", criteria.name)
       continue
     }
 

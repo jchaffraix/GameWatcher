@@ -5,7 +5,6 @@ import (
   "io"
   "fmt"
   "net/http"
-  "os"
   "strings"
 )
 
@@ -100,17 +99,24 @@ func FillFanaticalInfo(game *Game) error {
     return nil
   }
 
-  // We take the first result as it's the most relevant.
-  // TODO: Should I filter this like we do for steam?
-  hit := parsedResp.Hits[0]
-  // If fanatical doesn't find a game, it will still include some games whose name is close to the query.
-  if !strings.EqualFold(hit.Name, game.name) {
+  // Collect the names to filter the best match.
+  results := []GenericGame{}
+  for _, hit := range(parsedResp.Hits) {
+    results = append(results, GenericGame{hit.Name, hit.Price.USD, hit.Slug})
+  }
+  bestResultIdx := BestMatch(game.name, results)
+  if bestResultIdx == -1 {
     if debugFlag {
-      fmt.Fprintf(os.Stderr, "Fanatical returned the wrong game for \"%s\" (hit=%+v)\n", game.name, hit)
+      fmt.Printf("[Fanatical] No matching game for \"%s\"", game.name)
     }
     return nil
   }
-  game.fanatical.price = hit.Price.USD
-  game.fanatical.slug = hit.Slug
+
+  if debugFlag {
+    fmt.Printf("[Fanatical] Best hit: %+v\n", results[bestResultIdx])
+  }
+
+  game.fanatical.price = results[bestResultIdx].price
+  game.fanatical.slug = results[bestResultIdx].url
   return nil
 }

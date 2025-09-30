@@ -85,7 +85,7 @@ func FillLoadedInfo(game *Game) error {
     return nil
   }
 
-  // Collect the names.
+  // Collect the names to filter the best match.
   results := []GenericGame{}
   for _, hit := range(parsedResp.Results[0].Hits) {
     if hit.Platforms.Default != "Steam" {

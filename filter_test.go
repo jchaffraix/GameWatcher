@@ -27,6 +27,8 @@ func TestBestMatch(t *testing.T) {
     {"Doesn't match Season Pass", "Foobar", []GenericGame{gg("Foobar Season Pass")}, -1},
     {"Doesn't match Demo", "Foobar", []GenericGame{gg("Foobar Demo")}, -1},
 
+    {"Doesn't match a game with 0 price (demo)", "Foobar", []GenericGame{GenericGame{"Foobar", float32(0.0), "/some_path"}}, -1},
+
     {"Ignores PC for direct matching", "Foobar", []GenericGame{gg("Foobar 2"), gg("Foobar PC")}, 1},
 
     {"Matches Deluxe", "Foobar", []GenericGame{gg("Foobar Deluxe")}, 0},

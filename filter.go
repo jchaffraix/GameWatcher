@@ -11,28 +11,28 @@ type GenericGame struct {
   url string
 }
 
-func shouldIgnore(result string) bool {
-  if strings.Contains(result, "DLC") {
+func shouldIgnore(game GenericGame) bool {
+  if strings.Contains(game.name, "DLC") {
     return true
   }
 
-  if strings.Contains(result, "Soundtrack") || strings.Contains(result, "OST") {
+  if strings.Contains(game.name, "Soundtrack") || strings.Contains(game.name, "OST") {
     return true
   }
 
-  if strings.Contains(result, "Artbook") {
+  if strings.Contains(game.name, "Artbook") {
     return true
   }
 
-  if strings.Contains(result, "Adventure Pack") || strings.Contains(result, "Content Pack") || strings.Contains(result, "Costume Pack") {
+  if strings.Contains(game.name, "Adventure Pack") || strings.Contains(game.name, "Content Pack") || strings.Contains(game.name, "Costume Pack") {
     return true
   }
 
-  if strings.Contains(result, "Season Pass") {
+  if strings.Contains(game.name, "Season Pass") {
     return true
   }
 
-  if strings.Contains(result, " Demo") {
+  if strings.Contains(game.name, " Demo") || game.price == 0 {
     return true
   }
 
@@ -76,7 +76,7 @@ func BestMatch(game string, results []GenericGame) int {
   bestScore := float32(0.0)
   bestMatch := -1
   for i, result := range(results) {
-    if shouldIgnore(result.name) {
+    if shouldIgnore(result) {
       continue
     }
     score := score(game, result.name)

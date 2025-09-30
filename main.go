@@ -139,6 +139,9 @@ func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
   if err != nil {
     return err, nil
   }
+  if game == nil {
+    return errors.New("No steam game"), nil
+  }
 
   if game.steam.price == -1 {
     if debugFlag {

@@ -64,6 +64,10 @@ func score(name, result string) float32 {
     return 1.0
   }
 
+  // We should allow some looser comparison here that:
+  // 1. Ignore punctionations (e.g. dashes, colons, ...)
+  // 2. Ignore non-ascii characters (e.g. TM, ...)
+
   // TODO: Make this smarter :)
   return 0.0
 }

@@ -185,43 +185,17 @@ func parseSearchResult(gameName string, reader io.Reader) (error, []Game) {
 }
 
 func selectBestMatchingGame(name string, games []Game) *Game {
-  var bestMatchingGame *Game = nil
-  for idx, game := range(games) {
-    // If this is a direct match for the name, stop.
-    // This prevent unrelated matches to show up, especially for unreleased games.
-    if strings.ToLower(game.name) == strings.ToLower(name) {
-      // We can't use |game| here as it is temporary variable.
-      bestMatchingGame = &games[idx]
-      break
-    }
-
-    if strings.Contains(game.name, "Soundtrack") || strings.Contains(game.name, "OST") {
-      continue
-    }
-
-    if strings.Contains(game.name, "Artbook") {
-      continue
-    }
-
-    if strings.Contains(game.name, "Adventure Pack") || strings.Contains(game.name, "Season Pass") {
-      continue
-    }
-
-    // Ignore demos.
-    if game.steam.price == 0 {
-      continue
-    }
-
-    // We select the shortest name as it removes all the DLC.
-    if bestMatchingGame != nil && len(game.name) >= len(bestMatchingGame.name) {
-      continue
-    }
-
-    // We can't use |game| here as it is temporary variable.
-    bestMatchingGame = &games[idx]
+  // TODO: Remove this conversion...
+  ggames := []GenericGame{}
+  for _, game := range(games) {
+    ggames = append(ggames, GenericGame{game.name, game.steam.price, ""})
+  }
+  bestMatchingGameIdx := BestMatch(name, ggames)
+  if bestMatchingGameIdx == -1 {
+    return nil
   }
 
-  return bestMatchingGame
+  return &games[bestMatchingGameIdx]
 }
 
 

@@ -69,9 +69,8 @@ func FillLoadedInfo(game *Game) error {
   if err != nil {
     return err
   }
-  if debugFlag {
-    fmt.Printf("[Loaded] Got full response: %+v\n", string(body))
-  }
+  // The full response is large... Enabling only for debugging.
+  // fmt.Printf("[Loaded] Got full response: %+v\n", string(body))
   var parsedResp loadedSearchResponse
   json.Unmarshal(body, &parsedResp)
   if debugFlag {

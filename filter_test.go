@@ -4,38 +4,42 @@ import (
   "testing"
 )
 
+func gg(name string) GenericGame {
+  return GenericGame{name, 12.3, ""}
+}
+
 func TestBestMatch(t *testing.T) {
   tt := []struct {
     name string
-    gameName string
-    results []string
-    expected string
+    game string
+    results []GenericGame
+    expected int
   } {
-    {"No match", "Foobar", []string{}, ""},
+    {"No match", "Foobar", []GenericGame{}, -1},
 
-    {"Doesn't match DLC", "Foobar", []string{"Foobar DLC"}, ""},
-    {"Doesn't match Soundtrack", "Foobar", []string{"Foobar Soundtrack"}, ""},
-    {"Doesn't match OST", "Foobar", []string{"Foobar OST"}, ""},
-    {"Doesn't match Artbook", "Foobar", []string{"Foobar Artbook"}, ""},
-    {"Doesn't match Adventure Pack", "Foobar", []string{"Foobar Adventure Pack"}, ""},
-    {"Doesn't match Content Pack", "Foobar", []string{"Foobar Content Pack"}, ""},
-    {"Doesn't match Costume Pack", "Foobar", []string{"Foobar Costume Pack"}, ""},
-    {"Doesn't match Season Pass", "Foobar", []string{"Foobar Season Pass"}, ""},
-    {"Doesn't match Demo", "Foobar", []string{"Foobar Demo"}, ""},
+    {"Doesn't match DLC", "Foobar", []GenericGame{gg("Foobar DLC")}, -1},
+    {"Doesn't match Soundtrack", "Foobar", []GenericGame{gg("Foobar Soundtrack")}, -1},
+    {"Doesn't match OST", "Foobar", []GenericGame{gg("Foobar OST")}, -1},
+    {"Doesn't match Artbook", "Foobar", []GenericGame{gg("Foobar Artbook")}, -1},
+    {"Doesn't match Adventure Pack", "Foobar", []GenericGame{gg("Foobar Adventure Pack")}, -1},
+    {"Doesn't match Content Pack", "Foobar", []GenericGame{gg("Foobar Content Pack")}, -1},
+    {"Doesn't match Costume Pack", "Foobar", []GenericGame{gg("Foobar Costume Pack")}, -1},
+    {"Doesn't match Season Pass", "Foobar", []GenericGame{gg("Foobar Season Pass")}, -1},
+    {"Doesn't match Demo", "Foobar", []GenericGame{gg("Foobar Demo")}, -1},
 
-    {"Ignores PC for direct matching", "Foobar", []string{"Foobar 2", "Foobar PC"}, "Foobar PC"},
+    {"Ignores PC for direct matching", "Foobar", []GenericGame{gg("Foobar 2"), gg("Foobar PC")}, 1},
 
-    {"Matches Deluxe", "Foobar", []string{"Foobar Deluxe"}, "Foobar Deluxe"},
+    {"Matches Deluxe", "Foobar", []GenericGame{gg("Foobar Deluxe")}, 0},
 
-    {"Prefers base game rather than Deluxe", "Foobar", []string{"Foobar", "Foobar Deluxe"}, "Foobar"},
-    {"Prefers base game rather than DLC", "Foobar", []string{"Foobar - extra content", "Foobar"}, "Foobar"},
+    {"Prefers base game rather than Deluxe", "Foobar", []GenericGame{gg("Foobar"), gg("Foobar Deluxe")}, 0},
+    {"Prefers base game rather than DLC", "Foobar", []GenericGame{gg("Foobar - extra content"), gg("Foobar")}, 1},
   }
 
   for _, tc := range(tt) {
     t.Run(tc.name, func(t *testing.T) {
-      output := BestMatch(tc.gameName, tc.results)
+      output := BestMatch(tc.game, tc.results)
       if output != tc.expected {
-        t.Errorf("Expected %s but got %s", tc.expected, output)
+        t.Errorf("Expected %d but got %d", tc.expected, output)
         return
       }
     })

@@ -4,6 +4,13 @@ import (
   "strings"
 )
 
+type GenericGame struct {
+  name string
+  price float32
+  // Generic string: can be relative or absolute.
+  url string
+}
+
 func shouldIgnore(result string) bool {
   if strings.Contains(result, "DLC") {
     return true
@@ -61,21 +68,21 @@ func score(name, result string) float32 {
   return 0.0
 }
 
-func BestMatch(name string, results []string) string {
+func BestMatch(game string, results []GenericGame) int {
   if len(results) == 0 {
-    return ""
+    return -1
   }
 
   bestScore := float32(0.0)
-  bestMatch := ""
-  for _, result := range(results) {
-    if shouldIgnore(result) {
+  bestMatch := -1
+  for i, result := range(results) {
+    if shouldIgnore(result.name) {
       continue
     }
-    score := score(name, result)
+    score := score(game, result.name)
     if score > bestScore {
       bestScore = score
-      bestMatch = result
+      bestMatch = i
     }
   }
   return bestMatch

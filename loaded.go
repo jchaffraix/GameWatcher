@@ -86,7 +86,7 @@ func FillLoadedInfo(game *Game) error {
   }
 
   // Collect the names.
-  results := []string{}
+  results := []GenericGame{}
   for _, hit := range(parsedResp.Results[0].Hits) {
     if hit.Platforms.Default != "Steam" {
       if debugFlag {
@@ -100,27 +100,22 @@ func FillLoadedInfo(game *Game) error {
       }
       continue
     }
-    results = append(results, hit.Name.Default)
+    results = append(results, GenericGame{hit.Name.Default, hit.Price.USD.Default, hit.Url.Default})
   }
-  bestResult := BestMatch(game.name, results) 
-  if bestResult == "" {
+
+  bestResultIdx := BestMatch(game.name, results)
+  if bestResultIdx == -1 {
       if debugFlag {
         fmt.Printf("[Loaded] No matching game for %s\n", game.name)
       }
       return nil
   }
 
-  bestHit := &parsedResp.Results[0].Hits[0]
-  for _, hit := range(parsedResp.Results[0].Hits) {
-    if hit.Name.Default == bestResult {
-      bestHit = &hit
-    }
-  }
   if debugFlag {
-    fmt.Printf("[Loaded] Best hit: %+v\n", bestHit)
+    fmt.Printf("[Loaded] Best hit: %+v\n", results[bestResultIdx])
   }
 
-  game.loaded.price = bestHit.Price.USD.Default
-  game.loaded.url = bestHit.Url.Default
+  game.loaded.price = results[bestResultIdx].price
+  game.loaded.url = results[bestResultIdx].url
   return nil
 }

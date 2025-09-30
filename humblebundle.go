@@ -87,29 +87,32 @@ func FillHumbleBundleInfo(game *Game) error {
     return nil
   }
 
+  // Collect the names to filter the best match.
+  results := []GenericGame{}
   for _, hit := range(parsedResp.Hits) {
-    if strings.EqualFold(hit.Name, game.name) {
-      if !hasSteamDelivery(hit) {
-        if debugFlag {
-          fmt.Printf("Ignoring hit for \"%s\" with a steam delivery, full hit: %+v\n", game.name, hit)
-        }
-        continue
+    if !hasSteamDelivery(hit) {
+      if debugFlag {
+        fmt.Printf("[HumbleBundle] Ignoring hit for \"%s\" as it doesn't use steam delivery, full hit: %+v\n", game.name, hit)
       }
-      price, err := strconv.ParseFloat(hit.Pricing.US[0], 32)
-      if err != nil {
-        fmt.Fprintf(os.Stderr, "Invalid price for \"%s\", full hit: %+v\n", game.name, hit)
-        return nil
-      }
-
-      game.hb.price = float32(price)
-      game.hb.path = hit.Path
-      return nil
+      continue
     }
+    price, err := strconv.ParseFloat(hit.Pricing.US[0], 32)
+    if err != nil {
+      fmt.Fprintf(os.Stderr, "[HumbleBundle] Invalid price for \"%s\", full hit: %+v\n", game.name, hit)
+      continue
+    }
+
+    results = append(results, GenericGame{hit.Name, float32(price), hit.Path})
   }
- 
-  if debugFlag {
-    fmt.Printf("Did not find a HumbleBundle match for \"%s\"\n", game.name)
+  bestResultIdx := BestMatch(game.name, results)
+  if bestResultIdx == -1 {
+    if debugFlag {
+      fmt.Printf("[HumbleBundle] No match for \"%s\"\n", game.name)
+    }
+    return nil
   }
 
+  game.hb.price = results[bestResultIdx].price
+  game.hb.path = results[bestResultIdx].url
   return nil
 }

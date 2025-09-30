@@ -96,6 +96,13 @@ func FillHumbleBundleInfo(game *Game) error {
       }
       continue
     }
+    if len(hit.Pricing.US) == 0 {
+      if debugFlag {
+        fmt.Printf("[HumbleBundle] Ignoring hit for \"%s\" that doesn't have a price, full hit: %+v\n", game.name, hit)
+      }
+      continue
+    }
+
     price, err := strconv.ParseFloat(hit.Pricing.US[0], 32)
     if err != nil {
       fmt.Fprintf(os.Stderr, "[HumbleBundle] Invalid price for \"%s\", full hit: %+v\n", game.name, hit)

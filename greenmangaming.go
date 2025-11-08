@@ -92,6 +92,10 @@ func FillGreenManGamingInfo(game *Game) error {
   }
 
   for _, hit := range(parsedResp.Results[0].Hits) {
+    if hit.SteamAppId == "BUNDLE" {
+      continue
+    }
+
     steamAppId, err := strconv.Atoi(strings.TrimSpace(hit.SteamAppId))
     if err != nil {
       fmt.Fprintf(os.Stderr, "[GreenManGaming] Invalid SteamAppId for \"%s\", full hit: %+v\n", game.name, hit)

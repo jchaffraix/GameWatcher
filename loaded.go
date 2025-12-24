@@ -37,11 +37,16 @@ type inStockInfo struct {
   Default bool
 }
 
+type loadedDlcInfo struct {
+  Default string // "No" or "Yes"
+}
+
 type loadedGame struct {
   Name loadedGameName
   Url loadedGameUrl
   Price loadedGamePrice
   Platforms loadedGamePlatforms
+  DLC loadedDlcInfo
   // in_stock is either 1 or {"default": false}.
   // Unmarshal will skip the field if it's not appropriate.
   InStock int `json:"in_stock"`
@@ -90,6 +95,12 @@ func FillLoadedInfo(game *Game) error {
     if hit.Platforms.Default != "Steam" {
       if debugFlag {
         fmt.Printf("[Loaded] Ignoring non-steam game: %+v\n", hit)
+      }
+      continue
+    }
+    if hit.DLC.Default == "Yes" {
+      if debugFlag {
+        fmt.Printf("[Loaded] Ignoring dlc: %+v\n", hit)
       }
       continue
     }

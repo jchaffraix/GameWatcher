@@ -19,8 +19,6 @@ const (
   cGameClassNameAttr string = "match_name"
   cGameClassPriceAttr string = "match_price"
   cSteamSearchURLMissingKeyword string = "https://store.steampowered.com/search/suggest?term=%s&f=games&cc=US"
-
-  cDefaultTargetPrice float32 = 7
 )
 
 // States for our parser.

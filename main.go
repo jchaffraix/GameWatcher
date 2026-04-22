@@ -13,6 +13,10 @@ import (
   "sync"
 )
 
+const (
+  cDefaultMaxPrice float32 = 7
+)
+
 // TODO: All those common structs need to go to a shared file.
 type SteamInfo struct {
   // Either id (regular game) or bundleId (for bundles) will be ever set.
@@ -127,7 +131,7 @@ func (g Game) humbleBundleURL() string {
 
 type gameCriteria struct {
   name string
-  targetPrice float32
+  maxPrice float32
 }
 
 func fetchAndFillGame(criteria gameCriteria) (error, *Game) {
@@ -191,7 +195,7 @@ func gameWorker(c chan gameCriteria, output *Output) {
     }
 
     fillMinPrice(game)
-    splitGameOnCriteria(*game, criteria.targetPrice, output)
+    splitGameOnCriteria(*game, criteria, output)
 
     if debugFlag {
       fmt.Printf("Done for \"%s\", final game: %+v\n", criteria.name, *game)
@@ -225,7 +229,7 @@ func fillMinPrice(game *Game) {
   }
 }
 
-func splitGameOnCriteria(game Game, targetPrice float32, output *Output) {
+func splitGameOnCriteria(game Game, criteria gameCriteria, output *Output) {
   output.m.Lock()
   defer output.m.Unlock()
 
@@ -234,17 +238,16 @@ func splitGameOnCriteria(game Game, targetPrice float32, output *Output) {
     return
   }
 
-  // Simple price point right now.
-  if game.minPrice < targetPrice {
+  if game.minPrice < criteria.maxPrice {
     if debugFlag {
-      fmt.Fprintf(os.Stdout, "Game \"%s\" with price = %v (backend = \"%s\") matched targetPrice = %v\n", game.name, game.minPrice, game.backend, targetPrice)
+      fmt.Fprintf(os.Stdout, "Game \"%s\" with price = %v (backend = \"%s\") matched maxPrice = %v\n", game.name, game.minPrice, game.backend, criteria.maxPrice)
     }
     output.matchingGames = append(output.matchingGames, game)
     return
   }
 
   if debugFlag {
-    fmt.Fprintf(os.Stdout, "Game \"%s\" with price = %v (backend = \"%s\") was over targetPrice = %v\n", game.name, game.minPrice, game.backend, targetPrice)
+    fmt.Fprintf(os.Stdout, "Game \"%s\" with price = %v (backend = \"%s\") was over maxPrice = %v\n", game.name, game.minPrice, game.backend, criteria.maxPrice)
   }
   output.otherGames = append(output.otherGames, game)
 }
@@ -311,7 +314,7 @@ func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
     return []gameCriteria{}, err
   }
 
-    // Ensure that we close c to avoid deadlocks in case of errors.
+  // Ensure that we close c to avoid deadlocks in case of errors.
   defer file.Close()
 
   uniqueGameNames := make(map[string] bool)
@@ -324,7 +327,7 @@ func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
       break
     }
 
-    // We want to allow an optional targetPrice.
+    // We want to allow an optional maxPrice.
     // This means that we ignore ErrFieldCount errors by looking at the presence of `records`.
     if err != nil && records == nil {
       return []gameCriteria{}, err
@@ -342,15 +345,15 @@ func readGamesFromFiles(fileName string) ([]gameCriteria, error) {
     uniqueGameNames[gameName] = true
 
     // Start with our default and override it if specified.
-    targetPrice := cDefaultTargetPrice
+    maxPrice := cDefaultMaxPrice
     if len(records) == 2 {
       tmp, err := strconv.ParseFloat(strings.TrimSpace(records[1]), /*bitSize=*/32)
       if err != nil {
         return []gameCriteria{}, err
       }
-      targetPrice = float32(tmp)
+      maxPrice = float32(tmp)
     }
-    criteria = append(criteria, gameCriteria{gameName, targetPrice})
+    criteria = append(criteria, gameCriteria{gameName, maxPrice})
   }
   return criteria, nil
 }
@@ -374,17 +377,17 @@ func feedGamesFromFlag(games string, c chan gameCriteria) {
   for ; idx < len(tokens); idx++ {
     gameName := tokens[idx];
     // Start with our default and override it if specified.
-    targetPrice := cDefaultTargetPrice
+    maxPrice := cDefaultMaxPrice
     if idx < len(tokens) - 1 {
       lookAheadToken := tokens[idx + 1]
       tmp, err := strconv.ParseFloat(lookAheadToken, /*bitSize=*/32)
       if err == nil {
-        targetPrice = float32(tmp)
+        maxPrice = float32(tmp)
         // Skip next token as it was an optional price.
         idx += 1
       }
     }
-    c <- gameCriteria{gameName, targetPrice}
+    c <- gameCriteria{gameName, maxPrice}
   }
 }
 

@@ -13,7 +13,7 @@ import (
 
 const (
   // The key is returned in https://www.greenmangaming.com/en/Modals/AlgoliaSearchModal but it seems hard-coded.
-  cGMGApiKey string = "3bc4cebab2aa8cddab9e9a3cfad5aef3"
+  cGMGApiKey string = "7f2aba1ccb27473dcf2cace71bf20e85"
   cGMGSearchURLMissingKey string = "https://sczizsp09z-dsn.algolia.net/1/indexes/*/queries?x-algolia-api-key=%s&x-algolia-application-id=SCZIZSP09Z"
 )
 
@@ -55,14 +55,21 @@ func FillGreenManGamingInfo(game *Game) error {
   // The query is the JSON object send as application/x-www-form-urlencoded
   // url.QueryEscape replaces spaces with '+', which is not what we want for a POST.
   query := strings.ReplaceAll(url.QueryEscape(game.name), "+", "%20")
-  buf := fmt.Sprintf("{\"requests\":[{\"indexName\":\"prod_ProductSearch_US\",\"params\":\"query=%s\"}]}", query)
+  buf := fmt.Sprintf("{\"requests\":[{\"indexName\":\"prod_ProductSearch_US\",\"params\":\"query=%s&filters=IsSellable%%3Atrue\"}]}", query)
 
   if debugFlag {
     fmt.Printf("GreenManGaming payload: \"%s\"\n", buf)
   }
 
   reader := strings.NewReader(buf)
-  resp, err := http.Post(searchURL, "application/x-www-form-urlencoded", reader)
+  req, err := http.NewRequest("POST", searchURL, reader)
+  if err != nil {
+    return err
+  }
+
+  req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+  req.Header.Add("Referer", "https://www.greenmangaming.com/")
+  resp, err := http.DefaultClient.Do(req)
   if err != nil {
     return err
   }

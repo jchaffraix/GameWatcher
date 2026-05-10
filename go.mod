@@ -1,5 +1,5 @@
 module steamgamewatcher
 
-go 1.14
+go 1.25.0
 
-require golang.org/x/net v0.0.0-20200506145744-7e3656a0809f // indirect
+require golang.org/x/net v0.54.0
